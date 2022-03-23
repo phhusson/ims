@@ -13,13 +13,21 @@ import android.os.Looper
 import android.service.autofill.TextValueSanitizer
 import android.system.OsConstants.AF_INET
 import android.system.OsConstants.AF_INET6
+import android.telephony.SmsManager
+import android.telephony.SmsMessage
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Base64
 import android.util.Log
 import android.widget.TextView
+import java.io.BufferedInputStream
 import java.io.FileDescriptor
+import java.io.StringBufferInputStream
+import java.io.StringReader
 import java.net.*
 import java.security.MessageDigest
+import javax.xml.parsers.DocumentBuilder
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.concurrent.thread
 import kotlin.random.Random
 
@@ -30,6 +38,33 @@ fun String.toMD5(): String {
 
 fun ByteArray.toHex(): String {
     return joinToString("") { "%02x".format(it) }
+}
+
+fun BufferedInputStream.lines(): Iterator<String> {
+    return object: Iterator<String> {
+        val lineBuffer = ByteArray(512)
+        override fun hasNext(): Boolean {
+            return true
+        }
+
+        override fun next(): String {
+            mark(lineBuffer.size*2)
+            read(lineBuffer)
+            var pos = -1
+            for(i in lineBuffer.indices) {
+                if(lineBuffer[i] == '\n'.toByte()) {
+                    pos = i
+                    break
+                }
+            }
+            if(pos == -1) throw Exception("Buffered read failed, increase lineBuffer size?")
+            reset()
+
+            val thisBuffer = ByteArray(pos+1)
+            read(thisBuffer, 0, pos+1)
+            return String(thisBuffer, Charsets.US_ASCII)
+        }
+    }
 }
 
 class MainActivity : AppCompatActivity() {
@@ -318,13 +353,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("HardwareIds", "MissingPermission")
     fun launchIms(network: Network) {
         updateStatus("Got IMS network. Launching SIP")
 
         val ipsecManager = getSystemService(IpSecManager::class.java)
         val nm = getSystemService(ConnectivityManager::class.java)
-
         val tm = getSystemService(TelephonyManager::class.java)
+        val sm = getSystemService(SubscriptionManager::class.java)
+        val subscriptions = sm.activeSubscriptionInfoList
+        val activeSubscription = subscriptions[0]
+        val subId = activeSubscription.subscriptionId
+        val imei = tm.getDeviceId(activeSubscription.simSlotIndex)
+        val smsManager = getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
+        val smscStr = smsManager.smscAddress
+        val smscMatchRegex = Regex("([0-9]+)")
+        val smsc = smscMatchRegex.find(smscStr!!)!!.groupValues[1]
+
 
         val mcc = tm.simOperator.substring(0 until 3)
         var mnc = tm.simOperator.substring(3)
@@ -376,8 +421,11 @@ class MainActivity : AppCompatActivity() {
             val mySPI1 =
                 ipsecManager.allocateSecurityParameterIndex(lp.linkAddresses[0].address)
             val mySPI2 = ipsecManager.allocateSecurityParameterIndex(lp.linkAddresses[0].address, mySPI1.spi + 1)
-            //Contact: +sip.instance="<urn:gsma:imei:86687905-321566-0>";
-            //                            Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${socketInIpsec.localPort};port-s=${socketInIpsec.localPort+1};ealg=aes-cbc;alg=hmac-sha-1-96
+            //val secClient = "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
+            val secClient = "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96"
+            //val secClient = "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96, ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
+            // Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
+            val imeiStr = "86687905-321566-0"//imei.substring(0, 7) + "-" + imei.substring(7, 13) + "-" + imei.substring(13,14)
             val msg = """
                             REGISTER sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org SIP/2.0
                             Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};branch=$branch;rport
@@ -387,13 +435,13 @@ class MainActivity : AppCompatActivity() {
                             Max-Forwards: 70
                             Expires: 600000
                             User-Agent: Xiaomi__Android_12_MIUI220114
-                            Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:86687905-321566-0>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:$imeiStr>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
                             Supported: path, gruu, sec-agree
                             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
                             Authorization: Digest username="$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org",realm="ims.mnc$mnc.mcc$mcc.3gppnetwork.org",nonce="",uri="sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org",response="",algorithm=AKAv1-MD5
                             Require: sec-agree
                             Proxy-Require: sec-agree
-                            Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96
+                            $secClient
                             CSeq: 1 REGISTER
                             Content-Length: 0
                         """.trimIndent()
@@ -507,13 +555,15 @@ class MainActivity : AppCompatActivity() {
                         ik.toByteArray(),
                         96
                     )
-                )
-                .setEncryption(
-                    IpSecAlgorithm(
-                        IpSecAlgorithm.CRYPT_AES_CBC,
-                        ck.toByteArray()
-                    )
-                )
+                ).also {
+                    if(securityServer.contains("ealg=aes")) {
+                        it.setEncryption(
+                            IpSecAlgorithm(
+                                IpSecAlgorithm.CRYPT_AES_CBC,
+                                ck.toByteArray()
+                            ))
+                    }
+                }
                 .buildTransportModeTransform(lp.linkAddresses[0].address, serverSPI)
 
             val ingoingTransform = IpSecTransform.Builder(this)
@@ -523,13 +573,15 @@ class MainActivity : AppCompatActivity() {
                         ik.toByteArray(),
                         96
                     )
-                )
-                .setEncryption(
-                    IpSecAlgorithm(
-                        IpSecAlgorithm.CRYPT_AES_CBC,
-                        ck.toByteArray()
-                    )
-                )
+                ).also {
+                    if(securityServer.contains("ealg=aes")) {
+                        it.setEncryption(
+                            IpSecAlgorithm(
+                                IpSecAlgorithm.CRYPT_AES_CBC,
+                                ck.toByteArray()
+                            ))
+                    }
+                }
                 .buildTransportModeTransform(pcscf!!, mySPI1)
 
 
@@ -553,13 +605,15 @@ class MainActivity : AppCompatActivity() {
                             ik.toByteArray(),
                             96
                         )
-                    )
-                    .setEncryption(
-                        IpSecAlgorithm(
-                            IpSecAlgorithm.CRYPT_AES_CBC,
-                            ck.toByteArray()
-                        )
-                    )
+                    ).also {
+                        if(securityServer.contains("ealg=aes")) {
+                            it.setEncryption(
+                                IpSecAlgorithm(
+                                    IpSecAlgorithm.CRYPT_AES_CBC,
+                                    ck.toByteArray()
+                                ))
+                        }
+                    }
                     .buildTransportModeTransform(lp.linkAddresses[0].address, serverSPIC)
 
                 val ingoingTransformC = IpSecTransform.Builder(this)
@@ -569,13 +623,14 @@ class MainActivity : AppCompatActivity() {
                             ik.toByteArray(),
                             96
                         )
-                    )
-                    .setEncryption(
-                        IpSecAlgorithm(
-                            IpSecAlgorithm.CRYPT_AES_CBC,
-                            ck.toByteArray()
-                        )
-                    )
+                    ).also {
+                        if(securityServer.contains("ealg=aes"))
+                            it.setEncryption(
+                                IpSecAlgorithm(
+                                    IpSecAlgorithm.CRYPT_AES_CBC,
+                                    ck.toByteArray()
+                                ))
+                    }
                     .buildTransportModeTransform(pcscf!!, mySPI2)
 
 
@@ -595,8 +650,10 @@ class MainActivity : AppCompatActivity() {
                         thread {
                             Log.d("PHH", "Got new client!")
                             val input = client.getInputStream()
-                            val reader = input.bufferedReader()
+                            //val reader = input.bufferedReader()
+                            val reader = input.buffered()
                             val lines = mutableListOf<String>()
+                            val output = client.getOutputStream()
                             lines.clear()
                             var contentLength = 0
                             for (line in reader.lines()) {
@@ -606,9 +663,55 @@ class MainActivity : AppCompatActivity() {
                                 if(line.contains("Content-Length"))
                                     contentLength = extractValue(line)!!.toInt()
                             }
-                            val data = ByteArray(contentLength)
-                            val nRead = input.read(data)
-                            Log.d("PHH", "Client read $nRead ${data.toList()} ${data.joinToString("")}")
+
+                            val cseq = lines.find{ it.contains("CSeq")} ?: ""
+
+                            val fwdLine = lines.find { it.contains("Max-Forwards") }
+                            val fwd = (if(fwdLine != null) extractValue(fwdLine) else null)?.toInt() ?: 70
+
+                            val toLine = lines.find { it.contains("To") }
+                            val fromLine = lines.find { it.contains("From") }
+                            val viaLine = lines.find { it.contains("Via") }
+
+                            updateStatus("Unsolicited ${lines[0]}")
+
+                            val dataArr = ByteArray(contentLength)
+                            val nRead = reader.read(dataArr)
+
+                            if(lines[0].contains("MESSAGE")) {
+                                Log.d("PHH", "Client read $nRead ${dataArr.toList()}")
+                                try {
+                                    parseSms(dataArr)
+                                } catch(t : Throwable) {
+                                    Log.d("PHH", "Failed parsing message", t)
+                                }
+                            } else {
+                                val data = String(dataArr)
+                                Log.d("PHH", "Client read $nRead $data")
+                            }
+
+                            val myToTag =
+                                "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }
+                                    .joinToString("")
+
+                            val addToTag = if(toLine!!.contains("tag=")) "" else ";tag=$myToTag"
+
+                            val answer200 = """
+                                SIP/2.0 200 OK
+                                $viaLine
+                                $cseq
+                                $toLine$addToTag
+                                $fromLine
+                                Max-Forwards: ${fwd-1}
+                                Expires: 600000
+                                Content-Length: 0
+                            """.trimIndent()
+                            val answer = answer200
+                            Log.d("PHH", "Replying back with $answer")
+                            output.write(answer.replace("\n", "\r\n").toByteArray())
+                            output.write("\r\n".toByteArray())
+                            output.write("\r\n".toByteArray())
+                            client.close()
                         }
                     }
                 }
@@ -657,6 +760,8 @@ class MainActivity : AppCompatActivity() {
                     .joinToString("")
 
             val opaqueAdd = if (opaque != null) ",opaque=$opaque" else ""
+
+            //Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
             val msg2 = """
                             REGISTER sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org SIP/2.0
                             Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
@@ -666,13 +771,13 @@ class MainActivity : AppCompatActivity() {
                             Max-Forwards: 70
                             Expires: 600000
                             User-Agent: Xiaomi__Android_12_MIUI220114
-                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:86687905-321566-0>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:$imeiStr>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
                             Supported: path, gruu, sec-agree
                             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
                             Authorization: Digest username="$user",realm="$realm",nonce="$nonceb64",uri="sip:$realm",response="$chall",algorithm=AKAv1-MD5,cnonce="$cnonce",qop=auth,nc=$nonceCount$opaqueAdd
                             Require: sec-agree
                             Proxy-Require: sec-agree
-                            Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI1.spi + 1};port-c=${localPort};port-s=${localPort + 1};ealg=aes-cbc;alg=hmac-sha-1-96
+                            $secClient
                             Security-Verify: $securityServer
                             CSeq: 2 REGISTER
                             Content-Length: 0
@@ -692,7 +797,7 @@ class MainActivity : AppCompatActivity() {
             for (line in ipsecReader.lines()) {
                 lines.add(line.trim())
                 Log.d("PHH", "IPSEC Received < $line")
-                if (line.startsWith("P-Associated-Uri")) {
+                if (line.toLowerCase().startsWith("p-associated-uri")) {
                     val uri = extractValue(line)
                     if (uri!!.contains("tel:")) {
                         val phoneNumberRegex = Regex("<tel:([0-9+-]+)>")
@@ -715,6 +820,7 @@ class MainActivity : AppCompatActivity() {
             val route = (listOf(path) + svcRoute).joinToString(", ")
             Log.d("PHH", "Got my sip = $mySip, my number = $myPhoneNumber")
 
+            //contact: ;+sip.instance="<urn:gsma:imei:86687905-321566-0>"
             val msg3 = """
                             SUBSCRIBE sip:$mySip SIP/2.0
                             Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
@@ -726,14 +832,14 @@ class MainActivity : AppCompatActivity() {
                             Max-Forwards: 70
                             Expires: 600000
                             Route: $route
-                            User-Agent: Xiaomi__Android_12_MIUI220114
-                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:86687905-321566-0>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            User-Agent: XXiaomi__Android_12_MIUI220208
+                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
                             Supported: path, gruu, sec-agree
                             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
                             Authorization: Digest username="$user",realm="$realm",nonce="$nonceb64",uri="sip:$realm",response="$chall",algorithm=AKAv1-MD5,cnonce="$cnonce",qop=auth,nc=$nonceCount$opaqueAdd
                             Require: sec-agree
                             Proxy-Require: sec-agree
-                            Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI1.spi + 1};port-c=${localPort};port-s=${localPort + 1};ealg=aes-cbc;alg=hmac-sha-1-96
+                            $secClient
                             Security-Verify: $securityServer
                             CSeq: 3 SUBSCRIBE
                             Content-Length: 0
@@ -756,41 +862,47 @@ class MainActivity : AppCompatActivity() {
             updateStatus("Subscribe returned ${lines[0]}")
 
             Log.d("PHH", "End of susbcribe answer")
+            
+            if(false) {
+                val targetPhoneNumber = "XXXXXXX"
 
-            val msg4 = """
-MESSAGE sip:+33646106146@$realm SIP/2.0
-Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
-From: <sip:$mySip>;tag=$tag
-Max-Forwards: 70
-Expires: 600000
-To: <sip:+33646106146@$realm>
-Call-ID: $callId
-CSeq: 4 MESSAGE
-User-Agent: Xiaomi__Android_12_MIUI220114
-Security-Verify: $securityServer
-P-Preferred-Identity: <sip:$mySip>
-Route: $route
-Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-Content-Length: 5
+                val sms = encodeSms(smsc, targetPhoneNumber, "not hello")
+                val msg4 = """
+                MESSAGE sip:+$smsc@$realm SIP/2.0
+                Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
+                From: <sip:$mySip>;tag=$tag
+                Max-Forwards: 70
+                Expires: 600000
+                To: <sip:+$smsc@$realm>
+                Content-Type: application/vnd.3gpp.sms
+                Call-ID: $callId
+                CSeq: 4 MESSAGE
+                User-Agent: Xiaomi__Android_12_MIUI220208
+                Security-Verify: $securityServer
+                P-Preferred-Identity: <sip:$mySip>
+                Route: $route
+                Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                P-Asserted-Identity: <sip:$mySip>
+                Content-Length: ${sms!!.size}
+                """.trimIndent()
 
-hello
-                        """.trimIndent()
+                updateStatus("Sending SMS")
+                Log.d("PHH", "Sending $msg4")
 
-            updateStatus("Sending SMS")
-            Log.d("PHH", "Sending $msg4")
+                ipsecWriter.write(msg4.replace("\n", "\r\n").toByteArray())
+                ipsecWriter.write("\r\n".toByteArray())
+                ipsecWriter.write("\r\n".toByteArray())
+                ipsecWriter.write(sms)
 
-            ipsecWriter.write(msg4.replace("\n", "\r\n").toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
-
-            lines.clear()
-            for (line in ipsecReader.lines()) {
-                lines.add(line.trim())
-                Log.d("PHH", "IPSEC Received < $line")
-                if (line.trim() == "") break
+                lines.clear()
+                for (line in ipsecReader.lines()) {
+                    lines.add(line.trim())
+                    Log.d("PHH", "IPSEC Received < $line")
+                    if (line.trim() == "") break
+                }
+                updateStatus("SMS returned ${lines[0]}")
+                Log.d("PHH", "End of send SMS return")
             }
-            updateStatus("SMS returned ${lines[0]}")
-            Log.d("PHH", "End of send SMS return")
 
             for (line in ipsecReader.lines()) {
                 Log.d("PHH", "IPSEC Received < $line")
@@ -804,14 +916,21 @@ hello
         }
     }
 
+    @SuppressLint("HardwareIds", "MissingPermission")
     fun launchVolteNetwork() {
         val nm = getSystemService(ConnectivityManager::class.java)
         val tm = getSystemService(TelephonyManager::class.java)
         updateStatus("Requesting IMS network.")
 
+        val sm = getSystemService(SubscriptionManager::class.java)
+        val subscriptions = sm.activeSubscriptionInfoList
+        val activeSubscription = subscriptions[0]
+        val subId = activeSubscription.subscriptionId
+        val imei = tm.getDeviceId(activeSubscription.simSlotIndex)
+
         nm.registerNetworkCallback(NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-            .setNetworkSpecifier("1")
+            .setNetworkSpecifier(subId.toString())
             .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
             //.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             //.addCapability(NetworkCapabilities.NET_CAPABILITY_XCAP)
@@ -825,6 +944,49 @@ hello
         Thread.sleep(120 * 1000L)
     }
 
+    fun encodeSms(scAddress: String, destinationAddress: String, message: String): ByteArray? {
+        val t = SmsMessage.getSubmitPdu(scAddress, destinationAddress, message, false)
+        val pdu = t.encodedMessage
+        val headerSize = 3
+        val scSize = t.encodedScAddress?.size ?: 0
+        val v = ByteArray(pdu.size + headerSize + scSize + 1)
+        v[0] = 0
+        v[1] = 0x22 // What is that?!? RP Message Reference
+        v[2] = 0
+        if(t.encodedScAddress != null) System.arraycopy(t.encodedScAddress, 0, v, 3, scSize)
+        v[3 + scSize] = pdu.size.toByte()
+        System.arraycopy(pdu, 0, v, 3 + scSize + 1, pdu.size)
+        return v
+    }
+
+    fun parseSms(msg: ByteArray) {
+        var currentMsg = msg.toList()
+        val msgType = msg[0]
+        if(msgType != 1.toByte()) return
+        val msgRef = msg[1]
+        currentMsg = currentMsg.drop(2)
+        val originatorScLength = currentMsg[0].toInt() // Network to MS
+        currentMsg = currentMsg.drop(1)
+
+        val originatorSc = currentMsg.take(originatorScLength).toByteArray()
+        currentMsg = currentMsg.drop(originatorScLength)
+
+
+        val destinationLength = currentMsg[0].toInt()
+        currentMsg = currentMsg.drop(1)
+
+        val destination = currentMsg.take(destinationLength).toByteArray()
+        currentMsg = currentMsg.drop(destinationLength)
+        val pduSize = currentMsg[0]
+        currentMsg = currentMsg.drop(1)
+
+        //Prepend fake 0 for 0 scAddress ?!?
+        val msg = SmsMessage.createFromPdu((listOf(0.toByte()) + currentMsg).toByteArray())
+        Log.d("PHH", "Received SMS from ${msg.originatingAddress} also ${msg.displayOriginatingAddress} val ${msg.messageBody}")
+        updateStatus("Received SMS from ${msg.displayOriginatingAddress} val ${msg.messageBody}")
+    }
+
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
