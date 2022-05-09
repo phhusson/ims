@@ -425,7 +425,7 @@ class MainActivity : AppCompatActivity() {
             val secClient = "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96"
             //val secClient = "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96, ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
             // Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
-            val imeiStr = "86687905-321566-0"//imei.substring(0, 7) + "-" + imei.substring(7, 13) + "-" + imei.substring(13,14)
+            val imeiStr = imei.substring(0, 8) + "-" + imei.substring(8, 14) + "-0"
             val msg = """
                             REGISTER sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org SIP/2.0
                             Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};branch=$branch;rport
