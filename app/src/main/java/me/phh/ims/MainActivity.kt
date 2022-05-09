@@ -392,7 +392,7 @@ class MainActivity : AppCompatActivity() {
                 .joinToString("")
         var branch = "z9hG4bK_" + Random.Default.nextBytes(6)
             .map { String.format("%02x", it) }.joinToString("")
-        var callId =
+        val callId =
             "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }
                 .joinToString("")
         Log.d("PHH", "My addr $myAddr ; tag $tag; branch $branch ; callId $callId")
@@ -755,9 +755,6 @@ class MainActivity : AppCompatActivity() {
                     .joinToString("")
             branch = "z9hG4bK_" + Random.Default.nextBytes(6)
                 .map { String.format("%02x", it) }.joinToString("")
-            callId =
-                "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }
-                    .joinToString("")
 
             val opaqueAdd = if (opaque != null) ",opaque=$opaque" else ""
 
