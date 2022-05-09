@@ -799,7 +799,7 @@ class MainActivity : AppCompatActivity() {
                     if (uri!!.contains("tel:")) {
                         val phoneNumberRegex = Regex("<tel:([0-9+-]+)>")
                         myPhoneNumber = phoneNumberRegex.find(uri)!!.groupValues[1]
-                    } else if (uri!!.contains("sip:")) {
+                    } else if (mySip == "" && uri!!.contains("sip:")) {
                         val sipRegex = Regex("<sip:([^>]+)>")
                         mySip = sipRegex.find(uri)!!.groupValues[1]
                     }
