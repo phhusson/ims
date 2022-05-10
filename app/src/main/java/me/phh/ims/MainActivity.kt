@@ -672,6 +672,7 @@ class MainActivity : AppCompatActivity() {
                             val toLine = lines.find { it.contains("To") }
                             val fromLine = lines.find { it.contains("From") }
                             val viaLine = lines.find { it.contains("Via") }
+                            val callIdLine = lines.find { it.contains("Call-ID") }
 
                             updateStatus("Unsolicited ${lines[0]}")
 
@@ -702,6 +703,7 @@ class MainActivity : AppCompatActivity() {
                                 $cseq
                                 $toLine$addToTag
                                 $fromLine
+                                $callIdLine
                                 Max-Forwards: ${fwd-1}
                                 Expires: 600000
                                 Content-Length: 0
