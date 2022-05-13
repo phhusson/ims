@@ -117,3 +117,16 @@ fun parseMessage(input: BufferedReader): SipMessage? {
 		}
 	}
 }
+
+fun serializeMessage(message: SipCommonMessage): ByteArray =
+	// TODO: generate content-length header from body.size ?
+	message.headers.asSequence()
+		.fold(emptyList<String>(), { lines, (header, values) ->
+			// TODO: handle parameters
+			lines + values.map { "%s: %s".format(header, it.value) }
+		})
+		.map { it.toByteArray() }
+		.plus(listOf(ByteArray(0), message.body ?: ByteArray(0)))
+		.fold(message.firstLine.toByteArray(), { msg, line ->
+			msg + "\r\n".toByteArray() + line
+		})

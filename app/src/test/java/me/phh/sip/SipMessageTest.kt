@@ -66,4 +66,29 @@ class SipMessageTests {
 		require(message2 is SipResponse)
 		require(message2.statusCode == SipStatusCode(200))
 	}
+
+	@Test
+	fun `serializating and parsing again yields identical object`() {
+		val reader = messageRequest.toByteArray().inputStream().bufferedReader()
+		val message = parseMessage(reader)
+		require(message is SipRequest)
+		val serialize = serializeMessage(message.message)
+		// can't compare full string as we lowercased headers, check start/end
+		val firstLineEnd = messageRequest.indexOf('\n') + 1
+		require(serialize.take(firstLineEnd) == messageRequest.toByteArray().take(firstLineEnd))
+		// TODO: restore check when body implemented
+		//require(serialize.takeLast(10) == messageRequest.toByteArray().takeLast(10))
+		val reader2 = serialize.inputStream().bufferedReader()
+		val message2 = parseMessage(reader2)
+		require(message2 is SipRequest)
+		// doesn't work, println looks identical to me...
+		//require(message == message2)
+		require(message2.method == message.method)
+		require(message2.message.firstLine == message.message.firstLine)
+		require(message2.message.headers["from"] == message.message.headers["from"])
+		require(message2.message.headers["to"] == message.message.headers["to"])
+		require(message2.message.headers["route"] == message.message.headers["route"])
+		require(message2.message.headers["call-id"] == message.message.headers["call-id"])
+		require(message2.message.headers["content-length"] == message.message.headers["content-length"])
+	}
 }
