@@ -51,8 +51,8 @@ val okResponse =
 class SipMessageTests {
     @Test
     fun `parse single message request`() {
-        val reader = messageRequest.toByteArray().inputStream().bufferedReader()
-        val message = parseMessage(reader)
+        val reader = messageRequest.toByteArray().inputStream().sipReader()
+        val message = reader.parseMessage()
         require(message is SipRequest)
         require(message.method == SipMethod.MESSAGE)
         require(message.message.headers["cseq"]!![0].value == "1 MESSAGE")
@@ -60,38 +60,37 @@ class SipMessageTests {
 
     @Test
     fun `parse invalid message fails`() {
-        val reader = invalidRequest.toByteArray().inputStream().bufferedReader()
-        val message = parseMessage(reader)
+        val reader = invalidRequest.toByteArray().inputStream().sipReader()
+        val message = reader.parseMessage()
         require(message is SipCommonMessage)
         require(message.firstLine == "not a known request type")
     }
 
     @Test
     fun `parse two messages in a stream`() {
-        val reader = (messageRequest + okResponse).toByteArray().inputStream().bufferedReader()
-        val message1 = parseMessage(reader)
+        val reader = (messageRequest + okResponse).toByteArray().inputStream().sipReader()
+        val message1 = reader.parseMessage()
         require(message1 is SipRequest)
-        val message2 = parseMessage(reader)
+        val message2 = reader.parseMessage()
         require(message2 is SipResponse)
         require(message2.statusCode == SipStatusCode(200))
     }
 
     @Test
     fun `serializating and parsing again yields identical object`() {
-        val reader = messageRequest.toByteArray().inputStream().bufferedReader()
-        val message = parseMessage(reader)
+        val reader = messageRequest.toByteArray().inputStream().sipReader()
+        val message = reader.parseMessage()
         require(message is SipRequest)
-        val serialize = serializeMessage(message.message)
+        val serialize = message.message.serialize()
         // can't compare full string as we lowercased headers, check start/end
         val firstLineEnd = messageRequest.indexOf('\n') + 1
         require(serialize.take(firstLineEnd) == messageRequest.toByteArray().take(firstLineEnd))
-        // TODO: restore check when body implemented
-        // require(serialize.takeLast(10) == messageRequest.toByteArray().takeLast(10))
-        val reader2 = serialize.inputStream().bufferedReader()
-        val message2 = parseMessage(reader2)
+        require(serialize.takeLast(10) == messageRequest.toByteArray().takeLast(10))
+        val reader2 = serialize.inputStream().sipReader()
+        val message2 = reader2.parseMessage()
         require(message2 is SipRequest)
-        // doesn't work, println looks identical to me...
-        // require(message == message2)
+        // SipCommonMessage includes byte arrays which are not directly comparable,
+        // so we can't just require(message == message2). Check a few field manually instead.
         require(message2.method == message.method)
         require(message2.message.firstLine == message.message.firstLine)
         require(message2.message.headers["from"] == message.message.headers["from"])

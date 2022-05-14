@@ -1,7 +1,5 @@
 package me.phh.sip
 
-import java.io.BufferedReader
-
 /* type definitions */
 
 enum class SipMethod {
@@ -55,16 +53,12 @@ data class SipResponse(
  */
 private val splitHeader = "^(.+?) *: *(.+)$".toRegex()
 
-fun parseHeaders(input: BufferedReader): Map<String, List<SipHeader>> =
-    input
-        .lineSequence()
-        .takeWhile { it.isNotBlank() }
+fun SipReader.parseHeaders(): Map<String, List<SipHeader>> =
+    this.lineSequence()
         .fold(
             emptyMap<String, List<SipHeader>>(),
             fold@{ headers, line ->
                 // ignore anything we don't recognize
-                // TODO: if line starts with a space, content should be happened to previous value
-                // with newline and leading spaces being replaced by a single space
                 val (headerRaw, value) = splitHeader.find(line)?.destructured ?: return@fold headers
                 val header = headerRaw.lowercase()
                 val oldVal = headers.get(header) ?: emptyList<SipHeader>()
@@ -74,23 +68,10 @@ fun parseHeaders(input: BufferedReader): Map<String, List<SipHeader>> =
             }
         )
 
-fun parseMessage(input: BufferedReader): SipMessage? {
-    val firstLine = input.readLine() ?: return null
-    val headers = parseHeaders(input)
-    val body = headers["content-length"]?.getOrNull(0)?.value?.toInt()?.let(::ByteArray)
-    // XXX BROKEN ... and now we're here, there's no way to read into a ByteArray from a
-    // BufferedReader,
-    // so we need to start over with another reader type?
-    // We could:
-    //  - read into a char array, convert to string and back to bytearray... ugh.
-    //    Is there a charset that'd be safe to use for this? sms in particular are sent as
-    //    binary so we need something that doesn't mangle anything.
-    //  - reimplement a buffered-reader-like API over InputStream which deals with bytes
-    //  - give up on pretty functional parsing and implement a state maching that just matches
-    //    for expected patterns at each point of the parsing
-    //  - implement an ANTLR grammar for SIP? But I'm not sure it's a good fit, and couldn't
-    //    find anyone doing this for e.g. HTTP headers so it's probably not a good solution
-    body?.let { input.skip(it.size.toLong()) }
+fun SipReader.parseMessage(): SipMessage? {
+    val firstLine = this.readLine() ?: return null
+    val headers = this.parseHeaders()
+    val body = headers["content-length"]?.getOrNull(0)?.value?.toInt()?.let { this.readNBytes(it) }
     // TODO: parse body depending on content type (e.g. multipart)
     val commonMessage = SipCommonMessage(firstLine = firstLine, headers = headers, body = body)
     val firstLineSplit = firstLine.split(" ")
@@ -112,9 +93,9 @@ fun parseMessage(input: BufferedReader): SipMessage? {
     }
 }
 
-fun serializeMessage(message: SipCommonMessage): ByteArray =
+fun SipCommonMessage.serialize(): ByteArray =
     // TODO: generate content-length header from body.size ?
-    message.headers
+    this.headers
         .asSequence()
         .fold(
             emptyList<String>(),
@@ -124,5 +105,5 @@ fun serializeMessage(message: SipCommonMessage): ByteArray =
             }
         )
         .map { it.toByteArray() }
-        .plus(listOf(ByteArray(0), message.body ?: ByteArray(0)))
-        .fold(message.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
+        .plus(listOf(ByteArray(0), this.body ?: ByteArray(0)))
+        .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
