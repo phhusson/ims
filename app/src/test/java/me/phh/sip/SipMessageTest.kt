@@ -54,7 +54,8 @@ class SipMessageTests {
 	fun `parse invalid message fails`() {
 		val reader = invalidRequest.toByteArray().inputStream().bufferedReader()
 		val message = parseMessage(reader)
-		require(message == null)
+		require(message is SipCommonMessage)
+		require(message.firstLine == "not a known request type")
 	}
 
 	@Test

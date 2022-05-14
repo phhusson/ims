@@ -32,7 +32,7 @@ data class SipCommonMessage(
 	// and map doesn't allow duplicates)
 	// See RFC5621 section 3
 	val body: ByteArray?,
-)
+) : SipMessage()
 
 data class SipRequest(
 	val method: SipMethod,
@@ -110,11 +110,7 @@ fun parseMessage(input: BufferedReader): SipMessage? {
 			return SipResponse(statusCode=SipStatusCode(code), message=commonMessage)
 		}
 
-		else -> {
-			// TODO: log properly (something usable in tests and android)
-			println("Bad message: " + firstLine)
-			return null
-		}
+		else -> return commonMessage
 	}
 }
 
