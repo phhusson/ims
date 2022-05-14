@@ -76,7 +76,7 @@ class SipReaderTests {
         val array = ByteArray(6)
         require(reader.read(array) == 6)
         // kotlin arrays are java arrays, and java arrays equals doesn't
-        // compare array content.. but it works for slices
+        // compare array content.. but it works for slices as these are lists
         // https://discuss.kotlinlang.org/t/bytearray-comparison/1689/12
         require(array.slice(0..array.size - 1) == binaryData.slice(0..binaryData.size - 1))
     }

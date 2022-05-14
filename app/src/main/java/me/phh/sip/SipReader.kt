@@ -77,6 +77,19 @@ class SipReader(private val input: InputStream) : BufferedInputStream(input) {
 
         return String(line, Charsets.US_ASCII)
     }
+
+    fun readNBytes(len: Int): ByteArray {
+        // similar to inputStream readNBytes, loop if required
+        // but abort if we did not read full
+        var bytes = ByteArray(len)
+        var read = 0
+        while (read < len) {
+            val n = read(bytes, read, len - read)
+            if (n < 0) throw Exception("Early end of buffer")
+            read += n
+        }
+        return bytes
+    }
 }
 
 // lineSequence copied verbatim from kotlin sources, applies to SipReader.
