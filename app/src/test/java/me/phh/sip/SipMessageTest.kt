@@ -2,8 +2,10 @@ package me.phh.sip
 
 import org.junit.Test
 
+val binaryBody = (0..255).toList().map { it.toByte() }.toByteArray()
+
 val messageRequest =
-    """
+    ("""
     MESSAGE sip:ssg-m-07-f0.smsc.imsnw.kddi.ne.jp SIP/2.0
     Via: SIP/2.0/UDP [2001::1234]:6100;branch=z9hG4bK-557227-1---3c7feb1aa803b932;rport;transport=UDP
     Max-Forwards: 70
@@ -25,33 +27,41 @@ val messageRequest =
     P-Preferred-Identity: <sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>
     Accept-Contact: *;+g.3gpp.smsip
     P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=4405112341234123
-    Content-Length: 6
+    Content-Length: ${binaryBody.size}
     """
-        .trimIndent()
-        .replace("\n", "\r\n") + "\r\n\r\n" + String(byteArrayOf(2, 0, 0x41, 2, 0, 0))
+            .trimIndent()
+            .replace("\n", "\r\n") + "\r\n\r\n")
+        .toByteArray() + binaryBody
 
 val invalidRequest =
-    """
+    ("""
     not a known request type
     Via: something
-    """.trimIndent().replace("\n", "\r\n") +
-        "\r\n\r\n"
+    """
+            .trimIndent()
+            .replace("\n", "\r\n") + "\r\n\r\n")
+        .toByteArray()
 
 val okResponse =
-    """
+    ("""
     SIP/2.0 200 OK
     To: <sip:ssg-m-07-f0.smsc.imsnw.kddi.ne.jp>
     From: <sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>;tag=fd387c84
     Call-ID: 8SYJMQy24xcFyJ7s-MXFag..@2001::1234
     Content-Length: 0
     """
-        .trimIndent()
-        .replace("\n", "\r\n") + "\r\n\r\n"
+            .trimIndent()
+            .replace("\n", "\r\n") + "\r\n\r\n")
+        .toByteArray()
+
+val emptyMessage = ByteArray(0)
+val keepaliveMessage = "\r\n".toByteArray()
 
 class SipMessageTests {
     @Test
     fun `parse single message request`() {
-        val reader = messageRequest.toByteArray().inputStream().sipReader()
+        val reader = messageRequest.inputStream().sipReader()
+
         val message = reader.parseMessage()
         require(message is SipRequest)
         require(message.method == SipMethod.MESSAGE)
@@ -60,7 +70,8 @@ class SipMessageTests {
 
     @Test
     fun `parse invalid message fails`() {
-        val reader = invalidRequest.toByteArray().inputStream().sipReader()
+        val reader = invalidRequest.inputStream().sipReader()
+
         val message = reader.parseMessage()
         require(message is SipCommonMessage)
         require(message.firstLine == "not a known request type")
@@ -68,9 +79,11 @@ class SipMessageTests {
 
     @Test
     fun `parse two messages in a stream`() {
-        val reader = (messageRequest + okResponse).toByteArray().inputStream().sipReader()
+        val reader = (messageRequest + okResponse).inputStream().sipReader()
+
         val message1 = reader.parseMessage()
         require(message1 is SipRequest)
+
         val message2 = reader.parseMessage()
         require(message2 is SipResponse)
         require(message2.statusCode == SipStatusCode(200))
@@ -78,14 +91,18 @@ class SipMessageTests {
 
     @Test
     fun `serializating and parsing again yields identical object`() {
-        val reader = messageRequest.toByteArray().inputStream().sipReader()
+        val reader = messageRequest.inputStream().sipReader()
+
         val message = reader.parseMessage()
         require(message is SipRequest)
         val serialize = message.message.serialize()
         // can't compare full string as we lowercased headers, check start/end
-        val firstLineEnd = messageRequest.indexOf('\n') + 1
-        require(serialize.take(firstLineEnd) == messageRequest.toByteArray().take(firstLineEnd))
-        require(serialize.takeLast(10) == messageRequest.toByteArray().takeLast(10))
+        val firstLineEnd = messageRequest.indexOf('\n'.code.toByte()) + 1
+        require(serialize.take(firstLineEnd) == messageRequest.take(firstLineEnd))
+        require(
+            serialize.takeLast(binaryBody.size + 4) == messageRequest.takeLast(binaryBody.size + 4)
+        )
+
         val reader2 = serialize.inputStream().sipReader()
         val message2 = reader2.parseMessage()
         require(message2 is SipRequest)
@@ -100,5 +117,32 @@ class SipMessageTests {
         require(
             message2.message.headers["content-length"] == message.message.headers["content-length"]
         )
+    }
+
+    @Test
+    fun `try to parse empty message`() {
+        val reader = emptyMessage.inputStream().sipReader()
+
+        val message = reader.parseMessage()
+        require(message == null)
+    }
+
+    @Test
+    fun `try to parse keepalive crlf message`() {
+        val reader = keepaliveMessage.inputStream().sipReader()
+
+        val message = reader.parseMessage()
+        require(message == null)
+    }
+
+    @Test
+    fun `try to parse crlf then message`() {
+        val reader = (keepaliveMessage + messageRequest).inputStream().sipReader()
+
+        val message = reader.parseMessage()
+        require(message == null)
+
+        val message2 = reader.parseMessage()
+        require(message2 is SipRequest)
     }
 }

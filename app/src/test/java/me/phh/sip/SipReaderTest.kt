@@ -2,38 +2,42 @@ package me.phh.sip
 
 import org.junit.Test
 
-val simple = """
+val simple =
+    ("""
     line1
     line2
-    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n").toByteArray()
 
 val lineContinuation =
-    """
+    ("""
     line1
        line2 continued
-    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n")
+        .toByteArray()
 
 val multipleMessages =
-    """
+    ("""
     line1
     line2
 
     line1 again
-    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+    """.trimIndent().replace("\n", "\r\n") +
+            "\r\n\r\n")
+        .toByteArray()
 
-val binaryData = byteArrayOf(2, 0, 0x41, 2, 0, 0)
+val binaryData = (0..255).toList().map { it.toByte() }.toByteArray()
 val trailingData =
-    """
+    ("""
     line1
     line2
-    """.trimIndent().replace("\n", "\r\n") +
-        "\r\n\r\n" +
-        String(binaryData)
+    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n")
+        .toByteArray() + binaryData
 
 class SipReaderTests {
     @Test
     fun `simple read lines`() {
-        val reader = simple.toByteArray().inputStream().sipReader()
+        val reader = simple.inputStream().sipReader()
+
         val line1 = reader.readLine()
         require(line1 == "line1")
         val line2 = reader.readLine()
@@ -46,7 +50,8 @@ class SipReaderTests {
 
     @Test
     fun `read line with continuation`() {
-        val reader = lineContinuation.toByteArray().inputStream().sipReader()
+        val reader = lineContinuation.inputStream().sipReader()
+
         val line1 = reader.readLine()
         require(line1 == "line1 line2 continued")
         val line2 = reader.readLine()
@@ -55,7 +60,8 @@ class SipReaderTests {
 
     @Test
     fun `read two messages`() {
-        val reader = multipleMessages.toByteArray().inputStream().sipReader()
+        val reader = multipleMessages.inputStream().sipReader()
+
         val line1 = reader.readLine()
         require(line1 == "line1")
         val line2 = reader.readLine()
@@ -70,11 +76,13 @@ class SipReaderTests {
 
     @Test
     fun `read trailing data`() {
-        val reader = trailingData.toByteArray().inputStream().sipReader()
+        val reader = trailingData.inputStream().sipReader()
+
         val sequence = reader.lineSequence()
         require(sequence.toList() == listOf("line1", "line2"))
-        val array = ByteArray(6)
-        require(reader.read(array) == 6)
+
+        val array = ByteArray(binaryData.size)
+        require(reader.read(array) == binaryData.size)
         // kotlin arrays are java arrays, and java arrays equals doesn't
         // compare array content.. but it works for slices as these are lists
         // https://discuss.kotlinlang.org/t/bytearray-comparison/1689/12
@@ -83,21 +91,25 @@ class SipReaderTests {
 
     @Test
     fun `read two messages with lineSequence`() {
-        val reader = multipleMessages.toByteArray().inputStream().sipReader()
+        val reader = multipleMessages.inputStream().sipReader()
+
         val sequence = reader.lineSequence()
         require(sequence.toList() == listOf("line1", "line2"))
+
         val sequence2 = reader.lineSequence()
         require(sequence2.toList() == listOf("line1 again"))
     }
 
     @Test
     fun `read two messages with lineSequence and plain read between`() {
-        val reader = multipleMessages.toByteArray().inputStream().sipReader()
+        val reader = multipleMessages.inputStream().sipReader()
+
         val sequence = reader.lineSequence()
         require(sequence.toList() == listOf("line1", "line2"))
         val array = ByteArray(5)
         require(reader.read(array) == 5)
         require(String(array) == "line1")
+
         val sequence2 = reader.lineSequence()
         require(sequence2.toList() == listOf(" again"))
     }
