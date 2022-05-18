@@ -10,12 +10,25 @@ enum class SipMethod {
     CANCEL,
     BYE,
     OPTIONS,
-    MESSAGE
+    MESSAGE,
 }
 
 data class SipStatusCode(val code: Int)
 
-data class SipHeader(val value: String, val parameters: Map<String, String>)
+data class SipHeader(val value: String, val parameters: Map<String, String?>) {
+    override fun toString(): String =
+        this.value +
+            this.parameters
+                .asSequence()
+                .fold(
+                    "",
+                    { acc, (param, pvalue) ->
+                        if (pvalue != null) "$acc;$param=$pvalue" else "$acc;$param"
+                    }
+                )
+}
+
+
 
 sealed class SipMessage()
 
@@ -29,7 +42,21 @@ data class SipCommonMessage(
     // and map doesn't allow duplicates)
     // See RFC5621 section 3
     val body: ByteArray?,
-) : SipMessage()
+) : SipMessage() {
+    fun toByteArray(): ByteArray =
+        // TODO: generate content-length header from body.size ?
+        this.headers
+            .asSequence()
+            .fold(
+                emptyList<String>(),
+                { lines, (header, values) ->
+                    lines + values.map { "$header: ${it.toString()}" }
+                }
+            )
+            .map { it.toByteArray() }
+            .plus(listOf(ByteArray(0), this.body ?: ByteArray(0)))
+            .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
+}
 
 data class SipRequest(
     val method: SipMethod,
@@ -47,24 +74,68 @@ data class SipResponse(
  *    and should be joined with a single space
  *  - some headers are comma separated lists, multiple occurence of these headers
  *    is identical to having separated values on single line
- *  - some headers have parameters split by ;, thanksfully no comma separated list
- *    has these so there is no ambiguity vs. how they'd distribute in this case...
+ *  - some headers have parameters split by ;
  *  - headers and parameters are case-insensitive
  */
-private val splitHeader = "^(.+?) *: *(.+)$".toRegex()
+private val splitHeader = "^([^:]+)\\s*:\\s*(.+)$".toRegex()
+private val splitComma = "(<[^>]*>|[^,<]+)+".toRegex()
+private val splitSemiColumn = "(<[^>]*>|[^;<]+)+".toRegex()
+private val splitParam = "^([^=]+)=?(.*)".toRegex()
+
+fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
+    val (headerRaw, valueRaw) = splitHeader.find(line)?.destructured ?: return null
+    val values =
+        when (header) {
+            "contact",
+            "to",
+            "from",
+            "allow",
+            "p-asserted-identity",
+            "supported" -> splitComma.findAll(valueRaw).toList().map { it.groupValues[0].trim() }
+            else -> listOf(valueRaw)
+        }.map { attr ->
+            val (base, parameters) =
+                when (header) {
+                    "accept-contact",
+                    "security-verify",
+                    "security-client",
+                    "security-server",
+                    "contact",
+                    "to",
+                    "from",
+                    "via" -> {
+                        val paramSplit =
+                            splitSemiColumn.findAll(attr).toList().map { it.groupValues[0].trim() }
+                        paramSplit[0] to
+                            paramSplit
+                                .slice(1..paramSplit.size - 1)
+                                .map Map@{
+                                    val (a, b) =
+                                        splitParam.find(it)?.destructured
+                                            ?: return@Map it.lowercase() to ""
+                                    a.lowercase() to b.lowercase()
+                                }
+                                .toMap()
+                    }
+                    // TODO: also split 'authorization' on commas as parameters?
+                    else -> attr to emptyMap()
+                }
+            SipHeader(base, parameters)
+        }
+
+    return header to values
+}
+
 
 fun SipReader.parseHeaders(): Map<String, List<SipHeader>> =
     this.lineSequence()
         .fold(
             emptyMap<String, List<SipHeader>>(),
             fold@{ headers, line ->
-                // ignore anything we don't recognize
-                val (headerRaw, value) = splitHeader.find(line)?.destructured ?: return@fold headers
-                val header = headerRaw.lowercase()
+                val (header, value) = sipHeaderOf(line) ?: return@fold headers
                 val oldVal = headers.get(header) ?: emptyList<SipHeader>()
-                // TODO: split value for comma separated headers
-                // TODO: split parameters from value, making sure not to break <sip:...;...> apart
-                headers.plus(header to oldVal.plus(SipHeader(value, emptyMap())))
+
+                headers + (header to oldVal + value)
             }
         )
 
@@ -93,17 +164,3 @@ fun SipReader.parseMessage(): SipMessage? {
     }
 }
 
-fun SipCommonMessage.serialize(): ByteArray =
-    // TODO: generate content-length header from body.size ?
-    this.headers
-        .asSequence()
-        .fold(
-            emptyList<String>(),
-            { lines, (header, values) ->
-                // TODO: handle parameters
-                lines + values.map { "%s: %s".format(header, it.value) }
-            }
-        )
-        .map { it.toByteArray() }
-        .plus(listOf(ByteArray(0), this.body ?: ByteArray(0)))
-        .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })

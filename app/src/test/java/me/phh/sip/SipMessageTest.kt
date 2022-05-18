@@ -65,7 +65,13 @@ class SipMessageTests {
         val message = reader.parseMessage()
         require(message is SipRequest)
         require(message.method == SipMethod.MESSAGE)
-        require(message.message.headers["cseq"]!![0].value == "1 MESSAGE")
+        val headers = message.message.headers
+        require(headers["cseq"]!![0].value == "1 MESSAGE")
+        require(headers["supported"] == listOf("path", "gruu", "sec-agree").map { SipHeader(it, emptyMap()) } )
+        require(headers["from"]!![0].value == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>")
+        require(headers["from"]!![0].parameters == mapOf("tag" to "fd387c84"))
+        require(headers["security-verify"]!![0].value == "ipsec-3gpp")
+        require(headers["security-verify"]!![0].parameters["prot"] == "esp")
     }
 
     @Test
@@ -95,7 +101,7 @@ class SipMessageTests {
 
         val message = reader.parseMessage()
         require(message is SipRequest)
-        val serialize = message.message.serialize()
+        val serialize = message.message.toByteArray()
         // can't compare full string as we lowercased headers, check start/end
         val firstLineEnd = messageRequest.indexOf('\n'.code.toByte()) + 1
         require(serialize.take(firstLineEnd) == messageRequest.take(firstLineEnd))
