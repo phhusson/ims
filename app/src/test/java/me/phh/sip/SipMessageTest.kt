@@ -151,4 +151,21 @@ class SipMessageTests {
         val message2 = reader.parseMessage()
         require(message2 is SipRequest)
     }
+
+    @Test
+    fun `check autofill adds headers`() {
+        val headers = """
+            From: test
+            Via: test
+        """.toSipHeadersMap()
+        val message =
+            SipRequest(
+                method = SipMethod.REGISTER,
+                firstLineParam = "REGISTER xxx",
+                headersParam = headers,
+            )
+        require(message.message.headers["cseq"] == listOf(SipHeader("1 REGISTER", emptyMap())))
+        require(message.message.headers["from"]!![0].parameters["tag"] != null)
+        require(message.message.headers["via"]!![0].parameters["branch"] != null)
+    }
 }
