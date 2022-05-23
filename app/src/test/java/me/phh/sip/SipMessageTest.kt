@@ -20,7 +20,7 @@ val messageRequest =
     Allow: MESSAGE
     Content-Type: application/vnd.3gpp.sms
     In-Reply-To: 4ee646d0-6274eee0@[2001:1234:1234:0000:0000:0000:0000:000d]
-    Supported: path, gruu, sec-agree
+    k:path,   gruu,sec-agree
     User-Agent: ims phh v0.1
     Security-Verify: ipsec-3gpp;q=0.5;alg=hmac-sha-1-96;prot=esp;mod=trans;ealg=null;spi-c=52340051;spi-s=3859;port-c=7807;port-s=7777
     Request-Disposition: no-fork
@@ -67,8 +67,13 @@ class SipMessageTests {
         require(message.method == SipMethod.MESSAGE)
         val headers = message.message.headers
         require(headers["cseq"]!![0].value == "1 MESSAGE")
-        require(headers["supported"] == listOf("path", "gruu", "sec-agree").map { SipHeader(it, emptyMap()) } )
-        require(headers["from"]!![0].value == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>")
+        require(
+            headers["supported"] ==
+                listOf("path", "gruu", "sec-agree").map { SipHeader(it, emptyMap()) }
+        )
+        require(
+            headers["from"]!![0].value == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>"
+        )
         require(headers["from"]!![0].parameters == mapOf("tag" to "fd387c84"))
         require(headers["security-verify"]!![0].value == "ipsec-3gpp")
         require(headers["security-verify"]!![0].parameters["prot"] == "esp")

@@ -182,6 +182,21 @@ private val splitParam = "^([^=]+)=?(.*)".toRegex()
 
 fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
     val (headerRaw, valueRaw) = splitHeader.find(line)?.destructured ?: return null
+    val header =
+        when (val headerLowCase = headerRaw.lowercase()) {
+            // translate compact form to normal
+            "i" -> "call-id"
+            "m" -> "contact"
+            "e" -> "content-encoding"
+            "l" -> "content-length"
+            "c" -> "content-type"
+            "f" -> "from"
+            "s" -> "subject"
+            "k" -> "supported"
+            "t" -> "to"
+            "v" -> "via"
+            else -> headerLowCase
+        }
     val values =
         when (header) {
             "contact",
