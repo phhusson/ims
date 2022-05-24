@@ -171,4 +171,19 @@ class SipMessageTests {
         require(message.message.headers["from"]!![0].contains(";tag=") != null)
         require(message.message.headers["via"]!![0].getParams().component2()["branch"] != null)
     }
+
+    @Test
+    fun `check serialization regroups allow`() {
+        val headers = """
+            Allow: one, two, three
+        """.toSipHeadersMap()
+        val message =
+            SipRequest(
+                method = SipMethod.REGISTER,
+                destination = "xxx",
+                headersParam = headers,
+                autofill = false
+            )
+        require(message.toString() == "REGISTER xxx SIP/2.0\r\nallow: one, two, three\r\n\r\n")
+    }
 }

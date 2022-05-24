@@ -46,6 +46,15 @@ open class SipCommonMessage(
     fun toByteArray(): ByteArray =
         this.headers
             .asSequence()
+            .map {
+                // regroup headers that don't like being split when sending
+                (header, values) ->
+                when (header) {
+                    "allow",
+                    "supported" -> header to listOf(values.joinToString(", "))
+                    else -> header to values
+                }
+            }
             .fold(
                 emptyList<String>(),
                 { lines, (header, values) -> lines + values.map { "$header: ${it.toString()}" } }
