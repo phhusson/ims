@@ -17,18 +17,7 @@ enum class SipMethod {
 
 data class SipStatusCode(val code: Int)
 
-data class SipHeader(val value: String, val parameters: Map<String, String?>) {
-    override fun toString(): String =
-        this.value +
-            this.parameters
-                .asSequence()
-                .fold(
-                    "",
-                    { acc, (param, pvalue) ->
-                        if (pvalue != null) "$acc;$param=$pvalue" else "$acc;$param"
-                    }
-                )
-}
+typealias SipHeader = String
 
 typealias SipHeadersMap = Map<String, List<SipHeader>>
 
@@ -78,23 +67,25 @@ open class SipCommonMessage(
          */
         val newHeaders = mutableMapOf<String, List<SipHeader>>()
         if (headersParam["content-length"] == null) {
-            newHeaders["content-length"] =
-                listOf(SipHeader((this.body?.size ?: 0).toString(), emptyMap()))
+            newHeaders["content-length"] = listOf((this.body?.size ?: 0).toString())
         }
         if (headersParam["call-id"] == null) {
-            newHeaders["call-id"] = listOf(SipHeader(randomHexString(12), emptyMap()))
+            newHeaders["call-id"] = listOf(randomHexString(12))
         }
         if (headersParam["max-forwards"] == null) {
-            newHeaders["max-forwards"] = listOf(SipHeader("70", emptyMap()))
+            newHeaders["max-forwards"] = listOf("70")
+        }
+        if (headersParam["user-agent"] == null) {
+            newHeaders["user-agent"] = listOf("phh ims 0.1")
         }
         val from = headersParam["from"]
         if (from != null) {
             newHeaders["from"] =
                 from.map {
-                    if (it.parameters["tag"] != null) {
+                    if (it.contains(";tag=")) {
                         it
                     } else {
-                        SipHeader(it.value, it.parameters.plus("tag" to randomHexString(6)))
+                        "$it;tag=${randomHexString(6)}"
                     }
                 }
         }
@@ -102,13 +93,10 @@ open class SipCommonMessage(
         if (via != null) {
             newHeaders["via"] =
                 via.map {
-                    if (it.parameters["branch"] != null) {
+                    if (it.contains(";branch=")) {
                         it
                     } else {
-                        SipHeader(
-                            it.value,
-                            it.parameters.plus("branch" to "z9hG4bK" + randomHexString(6))
-                        )
+                        "$it;branch=z9hG4bK${randomHexString(6)}"
                     }
                 }
         }
@@ -140,7 +128,7 @@ data class SipRequest(
         val newHeaders = mutableMapOf<String, List<SipHeader>>()
 
         if (headersParam["cseq"] == null) {
-            newHeaders["cseq"] = listOf(SipHeader("1 ${this.method}", emptyMap()))
+            newHeaders["cseq"] = listOf("1 ${this.method}")
         }
 
         return headersParam + newHeaders
@@ -206,37 +194,21 @@ fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
             "p-asserted-identity",
             "supported" -> splitComma.findAll(valueRaw).toList().map { it.groupValues[0].trim() }
             else -> listOf(valueRaw)
-        }.map { attr ->
-            val (base, parameters) =
-                when (header) {
-                    "accept-contact",
-                    "security-verify",
-                    "security-client",
-                    "security-server",
-                    "contact",
-                    "to",
-                    "from",
-                    "via" -> {
-                        val paramSplit =
-                            splitSemiColumn.findAll(attr).toList().map { it.groupValues[0].trim() }
-                        paramSplit[0] to
-                            paramSplit
-                                .slice(1..paramSplit.size - 1)
-                                .map Map@{
-                                    val (a, b) =
-                                        splitParam.find(it)?.destructured
-                                            ?: return@Map it.lowercase() to ""
-                                    a.lowercase() to b.lowercase()
-                                }
-                                .toMap()
-                    }
-                    // TODO: also split 'authorization' on commas as parameters?
-                    else -> attr to emptyMap()
-                }
-            SipHeader(base, parameters)
         }
 
     return header to values
+}
+
+fun SipHeader.getParams(): Pair<String, Map<String, String?>> {
+    val paramSplit = splitSemiColumn.findAll(this).toList().map { it.groupValues[0].trim() }
+    return paramSplit[0] to
+        paramSplit
+            .slice(1..paramSplit.size - 1)
+            .map Map@{
+                val (a, b) = splitParam.find(it)?.destructured ?: return@Map it.lowercase() to null
+                a.lowercase() to b.lowercase()
+            }
+            .toMap()
 }
 
 fun String.toSipHeadersMap(): SipHeadersMap = this.lines().mapNotNull(::sipHeaderOf).toMap()
@@ -256,7 +228,7 @@ fun SipReader.parseHeaders(): SipHeadersMap =
 fun SipReader.parseMessage(): SipMessage? {
     val firstLine = this.readLine() ?: return null
     val headers = this.parseHeaders()
-    val body = headers["content-length"]?.getOrNull(0)?.value?.toInt()?.let { this.readNBytes(it) }
+    val body = headers["content-length"]?.getOrNull(0)?.toInt()?.let { this.readNBytes(it) }
     // TODO: parse body depending on content type (e.g. multipart)
     val firstLineSplit = firstLine.split(" ")
     when (firstLineSplit[0]) {

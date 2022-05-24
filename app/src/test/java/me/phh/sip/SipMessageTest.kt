@@ -66,17 +66,14 @@ class SipMessageTests {
         require(message is SipRequest)
         require(message.method == SipMethod.MESSAGE)
         val headers = message.message.headers
-        require(headers["cseq"]!![0].value == "1 MESSAGE")
-        require(
-            headers["supported"] ==
-                listOf("path", "gruu", "sec-agree").map { SipHeader(it, emptyMap()) }
-        )
-        require(
-            headers["from"]!![0].value == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>"
-        )
-        require(headers["from"]!![0].parameters == mapOf("tag" to "fd387c84"))
-        require(headers["security-verify"]!![0].value == "ipsec-3gpp")
-        require(headers["security-verify"]!![0].parameters["prot"] == "esp")
+        require(headers["cseq"]!![0] == "1 MESSAGE")
+        require(headers["supported"] == listOf("path", "gruu", "sec-agree"))
+        val (fromVal, fromParams) = headers["from"]!![0].getParams()
+        require(fromVal == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>")
+        require(fromParams == mapOf("tag" to "fd387c84"))
+        val (svValue, svParams) = headers["security-verify"]!![0].getParams()
+        require(svValue == "ipsec-3gpp")
+        require(svParams["prot"] == "esp")
     }
 
     @Test
@@ -166,11 +163,12 @@ class SipMessageTests {
         val message =
             SipRequest(
                 method = SipMethod.REGISTER,
-                firstLineParam = "REGISTER xxx",
+                firstLineParam = "REGISTER xxx SIP/2.0",
                 headersParam = headers,
             )
-        require(message.message.headers["cseq"] == listOf(SipHeader("1 REGISTER", emptyMap())))
-        require(message.message.headers["from"]!![0].parameters["tag"] != null)
-        require(message.message.headers["via"]!![0].parameters["branch"] != null)
+        require(message.message.firstLine == "REGISTER xxx SIP/2.0")
+        require(message.message.headers["cseq"] == listOf("1 REGISTER"))
+        require(message.message.headers["from"]!![0].contains(";tag=") != null)
+        require(message.message.headers["via"]!![0].getParams().component2()["branch"] != null)
     }
 }
