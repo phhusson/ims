@@ -54,6 +54,8 @@ open class SipCommonMessage(
             .plus(listOf(ByteArray(0), this.body ?: ByteArray(0)))
             .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
 
+    override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
+
     private fun completeHeaders(): SipHeadersMap {
         /* some headers can be automatically generated:
          * - Content-Length (rfc3261 section 20.14)
@@ -133,6 +135,8 @@ data class SipRequest(
 
         return headersParam + newHeaders
     }
+    fun toByteArray(): ByteArray = message.toByteArray()
+    override fun toString(): String = message.toString()
 }
 
 data class SipResponse(
@@ -152,6 +156,8 @@ data class SipResponse(
                 autofill = autofill,
             )
     }
+    fun toByteArray(): ByteArray = message.toByteArray()
+    override fun toString(): String = message.toString()
 }
 
 /* rfc3261 section 7 describes how headers should be formed, in particular:

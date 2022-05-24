@@ -103,7 +103,7 @@ class SipMessageTests {
 
         val message = reader.parseMessage()
         require(message is SipRequest)
-        val serialize = message.message.toByteArray()
+        val serialize = message.toByteArray()
         // can't compare full string as we lowercased headers, check start/end
         val firstLineEnd = messageRequest.indexOf('\n'.code.toByte()) + 1
         require(serialize.take(firstLineEnd) == messageRequest.take(firstLineEnd))
