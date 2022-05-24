@@ -1,4 +1,4 @@
-package me.phh.sip
+package me.phh.ims
 
 import java.io.BufferedInputStream
 import java.io.InputStream
