@@ -106,7 +106,7 @@ open class SipCommonMessage(
 
 data class SipRequest(
     val method: SipMethod,
-    private val firstLineParam: String,
+    val destination: String,
     private val headersParam: SipHeadersMap,
     private val body: ByteArray? = null,
     private val autofill: Boolean = true,
@@ -117,7 +117,7 @@ data class SipRequest(
 
         message =
             SipCommonMessage(
-                firstLine = firstLineParam,
+                firstLine = "$method $destination SIP/2.0",
                 headersParam = headers,
                 body = body,
                 autofill = autofill,
@@ -137,7 +137,7 @@ data class SipRequest(
 
 data class SipResponse(
     val statusCode: SipStatusCode,
-    private val firstLineParam: String,
+    val statusString: String,
     private val headersParam: SipHeadersMap,
     private val body: ByteArray? = null,
     private val autofill: Boolean = true,
@@ -146,7 +146,7 @@ data class SipResponse(
     init {
         message =
             SipCommonMessage(
-                firstLine = firstLineParam,
+                firstLine = "SIP/2.0 $statusCode $statusString",
                 headersParam = headersParam,
                 body = body,
                 autofill = autofill,
@@ -236,7 +236,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "REGISTER" ->
             return SipRequest(
                 method = SipMethod.REGISTER,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -244,7 +244,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "SUBSCRIBE" ->
             return SipRequest(
                 method = SipMethod.SUBSCRIBE,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -252,7 +252,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "INVITE" ->
             return SipRequest(
                 method = SipMethod.INVITE,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -260,7 +260,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "ACK" ->
             return SipRequest(
                 method = SipMethod.ACK,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -268,7 +268,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "CANCEL" ->
             return SipRequest(
                 method = SipMethod.CANCEL,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -276,7 +276,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "BYE" ->
             return SipRequest(
                 method = SipMethod.BYE,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -284,7 +284,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "OPTIONS" ->
             return SipRequest(
                 method = SipMethod.OPTIONS,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -292,7 +292,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "MESSAGE" ->
             return SipRequest(
                 method = SipMethod.MESSAGE,
-                firstLineParam = firstLine,
+                destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
                 autofill = false,
@@ -301,7 +301,7 @@ fun SipReader.parseMessage(): SipMessage? {
             val code = firstLineSplit.getOrNull(1)?.toInt() ?: return null
             return SipResponse(
                 statusCode = SipStatusCode(code),
-                firstLineParam = firstLine,
+                statusString = firstLineSplit.getOrNull(2) ?: "",
                 headersParam = headers,
                 body = body,
                 autofill = false,

@@ -163,7 +163,7 @@ class SipMessageTests {
         val message =
             SipRequest(
                 method = SipMethod.REGISTER,
-                firstLineParam = "REGISTER xxx SIP/2.0",
+                destination = "xxx",
                 headersParam = headers,
             )
         require(message.message.firstLine == "REGISTER xxx SIP/2.0")
