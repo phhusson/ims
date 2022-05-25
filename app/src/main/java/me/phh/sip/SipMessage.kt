@@ -189,9 +189,7 @@ data class SipResponse(
  *  - headers and parameters are case-insensitive
  */
 private val splitHeader = "^\\s*([^:]+)\\s*:\\s*(.+)$".toRegex()
-private val splitComma = "(<[^>]*>|[^,<]+)+".toRegex()
-private val splitSemiColumn = "(<[^>]*>|[^;<]+)+".toRegex()
-private val splitParam = "^([^=]+)=?(.*)".toRegex()
+private val splitComma = "(<[^>]*>|[^,]+?)+".toRegex()
 
 fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
     val (headerRaw, valueRaw) = splitHeader.find(line)?.destructured ?: return null
@@ -224,17 +222,44 @@ fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
     return header to values
 }
 
-fun SipHeader.getParams(): Pair<String, Map<String, String?>> {
-    val paramSplit = splitSemiColumn.findAll(this).toList().map { it.groupValues[0].trim() }
+private fun splitParams(
+    value: String,
+    splitRegex: Regex,
+    paramRegex: Regex,
+    lowercase: Boolean
+): Pair<String, Map<String, String?>> {
+    val paramSplit = splitRegex.findAll(value).toList().map { it.groupValues[0].trim() }
     return paramSplit[0] to
         paramSplit
             .slice(1..paramSplit.size - 1)
             .map Map@{
-                val (a, b) = splitParam.find(it)?.destructured ?: return@Map it.lowercase() to null
-                a.lowercase() to b.lowercase()
+                val (a, b) = paramRegex.find(it)?.destructured ?: return@Map it.lowercase() to null
+                a.lowercase() to (if (lowercase) b.lowercase() else b)
             }
             .toMap()
 }
+
+/* split parameters by semicolum.
+ * Note semi-column can be present in <sip:> tokens and we should not
+ * split these, hence the regex.
+ * both parameter name and its value are case insensitive, so lowercased.
+ * */
+private val splitParam = "(<[^>]*>|[^;]+?)+".toRegex()
+private val splitParamValue = "^([^=]+)=?(.*)".toRegex()
+
+fun SipHeader.getParams(): Pair<String, Map<String, String?>> =
+    splitParams(this, splitParam, splitParamValue, true)
+
+/* split www-authenticate header
+ * the first separator is a space then comma separates but we just assume
+ * words contain no space unless quoted
+ * quotes are removed from value, which is case sensitive
+ */
+private val splitAuth = """("[^"]*"|[^ ,]+?)+""".toRegex()
+private val splitAuthValue = """^([^=]+)="?([^"]*)"?""".toRegex()
+
+fun SipHeader.getAuthValues(): Pair<String, Map<String, String?>> =
+    splitParams(this, splitAuth, splitAuthValue, false)
 
 fun String.toSipHeadersMap(): SipHeadersMap = this.lines().mapNotNull(::sipHeaderOf).toMap()
 

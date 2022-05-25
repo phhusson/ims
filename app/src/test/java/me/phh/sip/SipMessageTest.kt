@@ -171,6 +171,16 @@ class SipMessageTests {
     }
 
     @Test
+    fun `check auth values splitting`() {
+        val header =
+            """Digest realm="ims.mnc051.mcc440.3gppnetwork.org",nonce="8QBO8ceNHcoud1KsnG5hknEPHYM2vQAAERNXvVk6N5M=",algorithm=AKAv1-MD5,qop="auth""""
+        val (type, params) = header.getAuthValues()
+        require(type == "Digest")
+        require(params["qop"]!! == "auth")
+        require(params["algorithm"]!! == "AKAv1-MD5")
+    }
+
+    @Test
     fun `check serialization regroups allow`() {
         val headers = """
             Allow: one, two, three
