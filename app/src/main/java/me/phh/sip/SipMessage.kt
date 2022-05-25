@@ -15,19 +15,24 @@ enum class SipMethod {
     MESSAGE,
 }
 
-data class SipStatusCode(val code: Int)
+typealias SipStatusCode = Int
 
 typealias SipHeader = String
 
 typealias SipHeadersMap = Map<String, List<SipHeader>>
 
-sealed class SipMessage()
+abstract class SipMessage() {
+    abstract val firstLine: String
+    abstract val headers: SipHeadersMap
+    abstract val body: ByteArray
+    abstract fun toByteArray(): ByteArray
+}
 
 fun randomHexString(bytes: Int): String =
     Random.Default.nextBytes(bytes).map { String.format("%02x", it) }.joinToString("")
 
 open class SipCommonMessage(
-    val firstLine: String,
+    override val firstLine: String,
     private val headersParam: SipHeadersMap,
     // TODO: messageBody needs to handle multipart, including nested multipart,
     // so needs to be a tree of sort? We can probably flatten it into
@@ -35,15 +40,15 @@ open class SipCommonMessage(
     // (second part list because there could be multiple of the same
     // and map doesn't allow duplicates)
     // See RFC5621 section 3
-    val body: ByteArray? = null,
+    override val body: ByteArray = ByteArray(0),
     private val autofill: Boolean = true,
 ) : SipMessage() {
-    val headers: SipHeadersMap
+    override val headers: SipHeadersMap
     init {
         headers = if (autofill) completeHeaders() else headersParam
     }
     // serialize message for sending
-    fun toByteArray(): ByteArray =
+    override fun toByteArray(): ByteArray =
         this.headers
             .asSequence()
             .map {
@@ -60,7 +65,7 @@ open class SipCommonMessage(
                 { lines, (header, values) -> lines + values.map { "$header: ${it.toString()}" } }
             )
             .map { it.toByteArray() }
-            .plus(listOf(ByteArray(0), this.body ?: ByteArray(0)))
+            .plus(listOf(ByteArray(0), this.body))
             .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
 
     override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
@@ -78,7 +83,7 @@ open class SipCommonMessage(
          */
         val newHeaders = mutableMapOf<String, List<SipHeader>>()
         if (headersParam["content-length"] == null) {
-            newHeaders["content-length"] = listOf((this.body?.size ?: 0).toString())
+            newHeaders["content-length"] = listOf((this.body.size).toString())
         }
         if (headersParam["call-id"] == null) {
             newHeaders["call-id"] = listOf(randomHexString(12))
@@ -119,10 +124,10 @@ data class SipRequest(
     val method: SipMethod,
     val destination: String,
     private val headersParam: SipHeadersMap,
-    private val body: ByteArray? = null,
+    override val body: ByteArray = ByteArray(0),
     private val autofill: Boolean = true,
 ) : SipMessage() {
-    val message: SipCommonMessage
+    private val message: SipCommonMessage
     init {
         val headers = if (autofill) completeRequestHeaders() else headersParam
 
@@ -135,7 +140,12 @@ data class SipRequest(
             )
     }
 
-    fun completeRequestHeaders(): SipHeadersMap {
+    override val firstLine = message.firstLine
+    override val headers = message.headers
+    override fun toByteArray(): ByteArray = message.toByteArray()
+    override fun toString(): String = message.toString()
+
+    private fun completeRequestHeaders(): SipHeadersMap {
         val newHeaders = mutableMapOf<String, List<SipHeader>>()
 
         if (headersParam["cseq"] == null) {
@@ -144,18 +154,16 @@ data class SipRequest(
 
         return headersParam + newHeaders
     }
-    fun toByteArray(): ByteArray = message.toByteArray()
-    override fun toString(): String = message.toString()
 }
 
 data class SipResponse(
     val statusCode: SipStatusCode,
     val statusString: String,
     private val headersParam: SipHeadersMap,
-    private val body: ByteArray? = null,
+    override val body: ByteArray = ByteArray(0),
     private val autofill: Boolean = true,
 ) : SipMessage() {
-    val message: SipCommonMessage
+    private val message: SipCommonMessage
     init {
         message =
             SipCommonMessage(
@@ -165,7 +173,9 @@ data class SipResponse(
                 autofill = autofill,
             )
     }
-    fun toByteArray(): ByteArray = message.toByteArray()
+    override val firstLine = message.firstLine
+    override val headers = message.headers
+    override fun toByteArray(): ByteArray = message.toByteArray()
     override fun toString(): String = message.toString()
 }
 
@@ -243,7 +253,9 @@ fun SipReader.parseHeaders(): SipHeadersMap =
 fun SipReader.parseMessage(): SipMessage? {
     val firstLine = this.readLine() ?: return null
     val headers = this.parseHeaders()
-    val body = headers["content-length"]?.getOrNull(0)?.toInt()?.let { this.readNBytes(it) }
+    val body =
+        headers["content-length"]?.getOrNull(0)?.toInt()?.let { this.readNBytes(it) }
+            ?: ByteArray(0)
     // TODO: parse body depending on content type (e.g. multipart)
     val firstLineSplit = firstLine.split(" ")
     when (firstLineSplit[0]) {
@@ -315,7 +327,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "SIP/2.0" -> {
             val code = firstLineSplit.getOrNull(1)?.toInt() ?: return null
             return SipResponse(
-                statusCode = SipStatusCode(code),
+                statusCode = code,
                 statusString = firstLineSplit.getOrNull(2) ?: "",
                 headersParam = headers,
                 body = body,

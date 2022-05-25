@@ -65,7 +65,7 @@ class SipMessageTests {
         val message = reader.parseMessage()
         require(message is SipRequest)
         require(message.method == SipMethod.MESSAGE)
-        val headers = message.message.headers
+        val headers = message.headers
         require(headers["cseq"]!![0] == "1 MESSAGE")
         require(headers["supported"] == listOf("path", "gruu", "sec-agree"))
         val (fromVal, fromParams) = headers["from"]!![0].getParams()
@@ -94,7 +94,7 @@ class SipMessageTests {
 
         val message2 = reader.parseMessage()
         require(message2 is SipResponse)
-        require(message2.statusCode == SipStatusCode(200))
+        require(message2.statusCode == 200)
     }
 
     @Test
@@ -117,14 +117,12 @@ class SipMessageTests {
         // SipCommonMessage includes byte arrays which are not directly comparable,
         // so we can't just require(message == message2). Check a few field manually instead.
         require(message2.method == message.method)
-        require(message2.message.firstLine == message.message.firstLine)
-        require(message2.message.headers["from"] == message.message.headers["from"])
-        require(message2.message.headers["to"] == message.message.headers["to"])
-        require(message2.message.headers["route"] == message.message.headers["route"])
-        require(message2.message.headers["call-id"] == message.message.headers["call-id"])
-        require(
-            message2.message.headers["content-length"] == message.message.headers["content-length"]
-        )
+        require(message2.firstLine == message.firstLine)
+        require(message2.headers["from"] == message.headers["from"])
+        require(message2.headers["to"] == message.headers["to"])
+        require(message2.headers["route"] == message.headers["route"])
+        require(message2.headers["call-id"] == message.headers["call-id"])
+        require(message2.headers["content-length"] == message.headers["content-length"])
     }
 
     @Test
@@ -166,10 +164,10 @@ class SipMessageTests {
                 destination = "xxx",
                 headersParam = headers,
             )
-        require(message.message.firstLine == "REGISTER xxx SIP/2.0")
-        require(message.message.headers["cseq"] == listOf("1 REGISTER"))
-        require(message.message.headers["from"]!![0].contains(";tag=") != null)
-        require(message.message.headers["via"]!![0].getParams().component2()["branch"] != null)
+        require(message.firstLine == "REGISTER xxx SIP/2.0")
+        require(message.headers["cseq"] == listOf("1 REGISTER"))
+        require(message.headers["from"]!![0].contains(";tag=") != null)
+        require(message.headers["via"]!![0].getParams().component2()["branch"] != null)
     }
 
     @Test
