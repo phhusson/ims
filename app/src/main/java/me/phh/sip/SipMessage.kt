@@ -34,6 +34,8 @@ abstract class SipMessage() {
                 (header, values) ->
                 when (header) {
                     "allow",
+                    "security-client",
+                    "security-server",
                     "supported" -> header to listOf(values.joinToString(", "))
                     else -> header to values
                 }
@@ -210,12 +212,14 @@ fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
         }
     val values =
         when (header) {
-            "contact",
-            "to",
-            "from",
             "allow",
+            "contact",
+            "from",
             "p-asserted-identity",
-            "supported" -> splitComma.findAll(valueRaw).toList().map { it.groupValues[0].trim() }
+            "security-client",
+            "security-verify",
+            "supported",
+            "to" -> splitComma.findAll(valueRaw).toList().map { it.groupValues[0].trim() }
             else -> listOf(valueRaw)
         }
 

@@ -388,13 +388,11 @@ class MainActivity : AppCompatActivity() {
 
             val mySPI1 = ipsecManager.allocateSecurityParameterIndex(myAddr)
             val mySPI2 = ipsecManager.allocateSecurityParameterIndex(myAddr, mySPI1.spi + 1)
-            // val secClient = "Security-Client:
-            // ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
-            val secClient =
-                "Security-Client: ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96"
-            // val secClient = "Security-Client:
-            // ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96, ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
-            // Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
+
+            fun secClient(ealg: String, alg: String) =
+                "ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+            val secClientLine =
+                "Security-Client: ${secClient("null", "hmac-sha-1-96")}, ${secClient("aes-cbc", "hmac-sha-1-96")}"
             val msg =
                 SipRequest(
                     SipMethod.REGISTER,
@@ -411,7 +409,7 @@ class MainActivity : AppCompatActivity() {
                         Authorization: Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5
                         Require: sec-agree
                         Proxy-Require: sec-agree
-                        $secClient
+                        $secClientLine
                     """.toSipHeadersMap()
                 )
             Log.d("PHH", "Sending $msg")
@@ -435,8 +433,11 @@ class MainActivity : AppCompatActivity() {
             updateStatus("Requesting AKA challenge")
             val akaResult = sipAkaChallenge(tm, nonceB64)
 
-            val securityServer = reply.headers["security-server"]!![0]
-            val (securityServerType, securityServerParams) = securityServer.getParams()
+            val securityServer = reply.headers["security-server"]!!
+            val (securityServerType, securityServerParams) =
+                reply.headers["security-server"]!!
+                    .map { it.getParams() }
+                    .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
             require(securityServerType == "ipsec-3gpp")
 
             val portS = securityServerParams["port-s"]!!.toInt()
@@ -454,7 +455,7 @@ class MainActivity : AppCompatActivity() {
                         IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                     )
                     .also {
-                        if (securityServer.contains("ealg=aes")) {
+                        if (securityServerParams["ealg"] == "aes-cbc") {
                             it.setEncryption(
                                 IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                             )
@@ -468,7 +469,7 @@ class MainActivity : AppCompatActivity() {
                         IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                     )
                     .also {
-                        if (securityServer.contains("ealg=aes")) {
+                        if (securityServerParams["ealg"] == "aes-cbc") {
                             it.setEncryption(
                                 IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                             )
@@ -495,7 +496,7 @@ class MainActivity : AppCompatActivity() {
                             IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                         )
                         .also {
-                            if (securityServer.contains("ealg=aes")) {
+                            if (securityServerParams["ealg"] == "aes-cbc") {
                                 it.setEncryption(
                                     IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                                 )
@@ -509,10 +510,11 @@ class MainActivity : AppCompatActivity() {
                             IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                         )
                         .also {
-                            if (securityServer.contains("ealg=aes"))
+                            if (securityServerParams["ealg"] == "aes-cbc") {
                                 it.setEncryption(
                                     IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                                 )
+                            }
                         }
                         .buildTransportModeTransform(pcscfAddr, mySPI2)
 
@@ -601,13 +603,13 @@ class MainActivity : AppCompatActivity() {
                     SipMethod.REGISTER,
                     "sip:$realm",
                     msg.headers +
+                        ("security-verify" to securityServer) +
                         // via/contact only IP changes: somehow make it variable?
                         // for further register refreshes, auth and cseq only should be incremented
                         """
                             Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
                             Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
                             Authorization: $akaDigest
-                            Security-Verify: $securityServer
                             CSeq: 2 REGISTER
                         """.toSipHeadersMap()
                 )
@@ -651,8 +653,8 @@ class MainActivity : AppCompatActivity() {
                         Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
                         Require: sec-agree
                         Proxy-Require: sec-agree
-                        Security-Verify: $securityServer
-                    """.toSipHeadersMap()
+                    """.toSipHeadersMap() +
+                        ("security-verify" to securityServer)
                 )
 
             Log.d("PHH", "Sending $msg3")
