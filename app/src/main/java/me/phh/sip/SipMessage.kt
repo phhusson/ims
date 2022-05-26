@@ -1,7 +1,5 @@
 package me.phh.ims
 
-import kotlin.random.Random
-
 /* type definitions */
 
 enum class SipMethod {
@@ -56,9 +54,6 @@ abstract class SipMessage() {
     override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
 }
 
-fun randomHexString(bytes: Int): String =
-    Random.Default.nextBytes(bytes).map { String.format("%02x", it) }.joinToString("")
-
 open class SipCommonMessage(
     override val firstLine: String,
     private val headersParam: SipHeadersMap,
@@ -93,7 +88,7 @@ open class SipCommonMessage(
             newHeaders["content-length"] = listOf((this.body.size).toString())
         }
         if (headersParam["call-id"] == null) {
-            newHeaders["call-id"] = listOf(randomHexString(12))
+            newHeaders["call-id"] = listOf(randomBytes(12).toHex())
         }
         if (headersParam["max-forwards"] == null) {
             newHeaders["max-forwards"] = listOf("70")
@@ -108,7 +103,7 @@ open class SipCommonMessage(
                     if (it.contains(";tag=")) {
                         it
                     } else {
-                        "$it;tag=${randomHexString(6)}"
+                        "$it;tag=${randomBytes(6).toHex()}"
                     }
                 }
         }
@@ -119,7 +114,7 @@ open class SipCommonMessage(
                     if (it.contains(";branch=")) {
                         it
                     } else {
-                        "$it;branch=z9hG4bK${randomHexString(6)}"
+                        "$it;branch=z9hG4bK${randomBytes(6).toHex()}"
                     }
                 }
         }

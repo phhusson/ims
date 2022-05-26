@@ -25,15 +25,6 @@ import java.security.MessageDigest
 import kotlin.concurrent.thread
 import kotlin.random.Random
 
-fun String.toMD5(): String {
-    val bytes = MessageDigest.getInstance("MD5").digest(this.toByteArray())
-    return bytes.toHex()
-}
-
-fun ByteArray.toHex(): String {
-    return joinToString("") { "%02x".format(it) }
-}
-
 fun BufferedInputStream.lines(): Iterator<String> {
     return object : Iterator<String> {
         val lineBuffer = ByteArray(512)
