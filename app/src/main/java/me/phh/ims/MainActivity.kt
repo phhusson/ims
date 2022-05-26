@@ -10,47 +10,15 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.system.OsConstants.AF_INET
 import android.system.OsConstants.AF_INET6
-import android.telephony.SmsManager
 import android.telephony.SmsMessage
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
-import android.util.Base64
 import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import java.io.BufferedInputStream
 import java.io.FileDescriptor
 import java.net.*
-import java.security.MessageDigest
 import kotlin.concurrent.thread
-import kotlin.random.Random
-
-fun BufferedInputStream.lines(): Iterator<String> {
-    return object : Iterator<String> {
-        val lineBuffer = ByteArray(512)
-        override fun hasNext(): Boolean {
-            return true
-        }
-
-        override fun next(): String {
-            mark(lineBuffer.size * 2)
-            read(lineBuffer)
-            var pos = -1
-            for (i in lineBuffer.indices) {
-                if (lineBuffer[i] == '\n'.toByte()) {
-                    pos = i
-                    break
-                }
-            }
-            if (pos == -1) throw Exception("Buffered read failed, increase lineBuffer size?")
-            reset()
-
-            val thisBuffer = ByteArray(pos + 1)
-            read(thisBuffer, 0, pos + 1)
-            return String(thisBuffer, Charsets.US_ASCII)
-        }
-    }
-}
 
 class MainActivity : AppCompatActivity() {
     // in Key: Value extract value
@@ -371,40 +339,34 @@ class MainActivity : AppCompatActivity() {
         val activeSubscription = subscriptions[0]
         val subId = activeSubscription.subscriptionId
         val imei = tm.getDeviceId(activeSubscription.simSlotIndex)
-        val smsManager = getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
-        val smscStr = smsManager.smscAddress
-        val smscMatchRegex = Regex("([0-9]+)")
-        val smsc = smscMatchRegex.find(smscStr!!)!!.groupValues[1]
+        val sipInstance =
+            "<urn:gsma:imei:" + imei.substring(0, 8) + "-" + imei.substring(8, 14) + "-0>"
 
         val mcc = tm.simOperator.substring(0 until 3)
-        var mnc = tm.simOperator.substring(3)
-        if (mnc.length == 2) mnc = "0$mnc"
+        val mnc = tm.simOperator.substring(3).let { if (it.length == 2) "0$it" else it }
         val imsi = tm.subscriberId
 
         Thread.sleep(3000)
         Log.d("PHH", "XCAP+WIFI transport available ${network}")
-        val lp = nm.getLinkProperties(network)
-        val caps = nm.getNetworkCapabilities(network)
-        Log.d("PHH", " caps = $caps, lp = $lp")
+        val (myAddr, pcscfAddr) =
+            {
+                val lp = nm.getLinkProperties(network)
+                val caps = nm.getNetworkCapabilities(network)
+                Log.d("PHH", " caps = $caps, lp = $lp")
+                val pcscfs =
+                    lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
+                lp.linkAddresses[0].address to pcscfs[0]
+            }()
+        val myAddrString = myAddr.hostAddress
         val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
         val user = "$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
-        val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
-        val pcscf = pcscfs[0]
 
-        val myAddr = lp.linkAddresses[0].address.hostAddress
-        var tag =
-            "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }.joinToString("")
-        var branch =
-            "z9hG4bK_" +
-                Random.Default.nextBytes(6).map { String.format("%02x", it) }.joinToString("")
-        val callId =
-            "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }.joinToString("")
-        Log.d("PHH", "My addr $myAddr ; tag $tag; branch $branch ; callId $callId")
+        Log.d("PHH", "My addr $myAddrString")
         try {
             updateStatus("Connecting to SIP")
 
             val socketFactory = network.socketFactory
-            val socket = socketFactory.createSocket(pcscf, 5060)
+            val socket = socketFactory.createSocket(pcscfAddr, 5060)
 
             updateStatus("Registering 1")
 
@@ -421,15 +383,11 @@ class MainActivity : AppCompatActivity() {
             network.bindSocket(serverSocketFd)
 
             val writer = socket.getOutputStream()
-            val reader = socket.getInputStream().bufferedReader()
+            val reader = socket.getInputStream().sipReader()
             val localPort = socketInIpsec.localPort
 
-            val mySPI1 = ipsecManager.allocateSecurityParameterIndex(lp.linkAddresses[0].address)
-            val mySPI2 =
-                ipsecManager.allocateSecurityParameterIndex(
-                    lp.linkAddresses[0].address,
-                    mySPI1.spi + 1
-                )
+            val mySPI1 = ipsecManager.allocateSecurityParameterIndex(myAddr)
+            val mySPI2 = ipsecManager.allocateSecurityParameterIndex(myAddr, mySPI1.spi + 1)
             // val secClient = "Security-Client:
             // ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
             val secClient =
@@ -437,167 +395,86 @@ class MainActivity : AppCompatActivity() {
             // val secClient = "Security-Client:
             // ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=null;alg=hmac-sha-1-96, ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=aes-cbc;alg=hmac-sha-1-96"
             // Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
-            val imeiStr = imei.substring(0, 8) + "-" + imei.substring(8, 14) + "-0"
             val msg =
-                """
-                            REGISTER sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org SIP/2.0
-                            Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};branch=$branch;rport
-                            From: <sip:$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org>;tag=$tag
-                            To: <sip:$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org>
-                            Call-ID: $callId
-                            Max-Forwards: 70
+                SipRequest(
+                    SipMethod.REGISTER,
+                    "sip:$realm",
+                    """
+                            Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};rport
+                            From: <sip:$user>
+                            To: <sip:$user>
                             Expires: 600000
-                            User-Agent: Xiaomi__Android_12_MIUI220114
-                            Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:$imeiStr>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+
                             Supported: path, gruu, sec-agree
                             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                            Authorization: Digest username="$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org",realm="ims.mnc$mnc.mcc$mcc.3gppnetwork.org",nonce="",uri="sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org",response="",algorithm=AKAv1-MD5
+                            Authorization: Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5
                             Require: sec-agree
                             Proxy-Require: sec-agree
                             $secClient
-                            CSeq: 1 REGISTER
-                            Content-Length: 0
-                        """.trimIndent()
-
+                        """.toSipHeadersMap()
+                )
             Log.d("PHH", "Sending $msg")
 
-            writer.write(msg.replace("\n", "\r\n").toByteArray())
-            writer.write("\r\n".toByteArray())
-            writer.write("\r\n".toByteArray())
+            writer.write(msg.toByteArray())
 
-            var lines = mutableListOf<String>()
-            for (line in reader.lines()) {
-                lines.add(line.trim())
-                Log.d("PHH", "Received < $line")
-                if (line.trim() == "") break
-            }
+            val reply = reader.parseMessage()!!
+            Log.d("PHH", "received: $reply")
+            // XXX keep open for TCP keepalive
             socket.close()
             Log.d("PHH", "Socket closed!")
 
-            updateStatus("Register 1 answered with ${lines[0]}")
+            updateStatus("Register 1 answered with ${reply.firstLine}")
+            // assert SipResponse && code 401?
 
-            val securityServer =
-                lines
-                    .find { it.toLowerCase().contains("security-server") }!!.replace(
-                        "Security-Server: ",
-                        ""
-                    )
-            val opaqueRegex = Regex(".*opaque=(\"[^\"]*\").*")
-            val opaqueLine = lines.find { it.contains("opaque") }
-            val opaque =
-                if (opaqueLine != null) opaqueRegex.find(opaqueLine)!!.groupValues[1] else null
-
-            val nonceRegex = Regex(".*nonce=\"([^\"]*)\".*")
-            val nonceLine = lines.find { it.contains("nonce") }
-            val nonceb64 = nonceRegex.find(nonceLine!!)!!.groups[1]!!.value
-            val nonce = Base64.decode(nonceb64, Base64.DEFAULT)
-
-            val rand = nonce.take(16)
-            val autn = nonce.drop(16).take(16)
-            val mac = nonce.drop(32)
-
-            val challengeBytes = listOf(rand.size.toByte()) + rand + autn.size.toByte() + autn
-            val challengeArray = challengeBytes.toByteArray()
-
-            val challenge = Base64.encodeToString(challengeArray, Base64.NO_WRAP)
-            Log.d("PHH", "Challenge B64 is $challenge")
+            val (wwwAuthenticateType, wwwAuthenticateParams) =
+                reply.headers["www-authenticate"]!![0].getAuthValues()
+            require(wwwAuthenticateType == "Digest")
+            val nonceB64 = wwwAuthenticateParams["nonce"]!!
 
             updateStatus("Requesting AKA challenge")
-            val responseB64 =
-                tm.getIccAuthentication(
-                    TelephonyManager.APPTYPE_USIM,
-                    TelephonyManager.AUTHTYPE_EAP_AKA,
-                    challenge
-                )
-            val response = Base64.decode(responseB64, Base64.DEFAULT)
-            if (response[0] != (0xdb).toByte()) {
-                updateStatus("AKA challenge failed")
-                Log.d("PHH", "AKA challenge from SIP failed")
-                throw Exception("AKA Challenge from SIP failed")
-            }
+            val akaResult = sipAkaChallenge(tm, nonceB64)
 
-            val responseStream = response.iterator()
+            val securityServer = reply.headers["security-server"]!![0]
+            val (securityServerType, securityServerParams) = securityServer.getParams()
+            require(securityServerType == "ipsec-3gpp")
 
-            // 0xdb
-            responseStream.nextByte()
+            val portS = securityServerParams["port-s"]!!.toInt()
+            // spi string is 32 bit unsigned, but ipsecManager wants an int...
+            val spiS = securityServerParams["spi-s"]!!.toUInt().toInt()
+            val serverSPI = ipsecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
 
-            val resLen = responseStream.nextByte().toInt()
-            Log.d("PHH", "resLen $resLen")
-            val res = (0 until resLen).map { responseStream.nextByte() }.toList()
-
-            val ckLen = responseStream.nextByte().toInt()
-            Log.d("PHH", "ckLen $ckLen")
-            val ck = (0 until ckLen).map { responseStream.nextByte() }.toList()
-
-            val ikLen = responseStream.nextByte().toInt()
-            Log.d("PHH", "ikLen $ikLen")
-            val ik = (0 until ikLen).map { responseStream.nextByte() }.toList()
-
-            Log.d("PHH", "Got res $res ck $ck ik $ik")
-            val ikStr = ik.map { String.format("%02x", it) }.joinToString("")
-            val ckStr = ck.map { String.format("%02x", it) }.joinToString("")
-            val resStr = res.map { String.format("%02x", it) }.joinToString("")
-
-            val portSRegex = Regex(".*port-s=([0-9]+).*")
-            val portS =
-                lines.map { portSRegex.find(it) }.find { it != null }!!.groupValues[1].toInt()
-            val spiSRegex = Regex(".*spi-s=([0-9]+).*")
-            val spiS =
-                lines
-                    .map { spiSRegex.find(it) }
-                    .find { it != null }!!
-                    .groupValues[1]
-                    .toUInt()
-                    .toInt()
-            val serverSPI = ipsecManager.allocateSecurityParameterIndex(pcscf!!, spiS)
-
-            val portCRegex = Regex(".*port-c=([0-9]+).*")
-            val portC =
-                lines.map { portCRegex.find(it) }.find { it != null }!!.groupValues[1].toInt()
-            val spiCRegex = Regex(".*spi-c=([0-9]+).*")
-            val spiC =
-                lines
-                    .map { spiCRegex.find(it) }
-                    .find { it != null }!!
-                    .groupValues[1]
-                    .toUInt()
-                    .toInt()
-            val serverSPIC = ipsecManager.allocateSecurityParameterIndex(pcscf!!, spiC)
-
-            val k =
-                "\"IPv6\",\"$myAddr\",\"${pcscf!!.hostAddress}\",\"${mySPI1.spi}\",\"AES-CBC [RFC3602]\",\"0x$ckStr\",\"HMAC-SHA-1-96 [RFC2404]\",\"0x$ikStr\""
-            val k2 =
-                "\"IPv6\",\"${pcscf!!.hostAddress}\",\"$myAddr\",\"${spiS}\",\"AES-CBC [RFC3602]\",\"0x$ckStr\",\"HMAC-SHA-1-96 [RFC2404]\",\"0x$ikStr\""
-            Log.d("PHH", k)
-            Log.d("PHH", k2)
+            val portC = securityServerParams["port-c"]!!.toInt()
+            val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
+            val serverSPIC = ipsecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
 
             val outgoingTransform =
                 IpSecTransform.Builder(this)
                     .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, ik.toByteArray(), 96)
+                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                     )
                     .also {
                         if (securityServer.contains("ealg=aes")) {
                             it.setEncryption(
-                                IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, ck.toByteArray())
+                                IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                             )
                         }
                     }
-                    .buildTransportModeTransform(lp.linkAddresses[0].address, serverSPI)
+                    .buildTransportModeTransform(myAddr, serverSPI)
 
             val ingoingTransform =
                 IpSecTransform.Builder(this)
                     .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, ik.toByteArray(), 96)
+                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                     )
                     .also {
                         if (securityServer.contains("ealg=aes")) {
                             it.setEncryption(
-                                IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, ck.toByteArray())
+                                IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                             )
                         }
                     }
-                    .buildTransportModeTransform(pcscf!!, mySPI1)
+                    .buildTransportModeTransform(pcscfAddr, mySPI1)
 
             ipsecManager.applyTransportModeTransform(
                 socketInIpsec,
@@ -615,29 +492,29 @@ class MainActivity : AppCompatActivity() {
                 val outgoingTransformC =
                     IpSecTransform.Builder(this)
                         .setAuthentication(
-                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, ik.toByteArray(), 96)
+                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                         )
                         .also {
                             if (securityServer.contains("ealg=aes")) {
                                 it.setEncryption(
-                                    IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, ck.toByteArray())
+                                    IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                                 )
                             }
                         }
-                        .buildTransportModeTransform(lp.linkAddresses[0].address, serverSPIC)
+                        .buildTransportModeTransform(myAddr, serverSPIC)
 
                 val ingoingTransformC =
                     IpSecTransform.Builder(this)
                         .setAuthentication(
-                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, ik.toByteArray(), 96)
+                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
                         )
                         .also {
                             if (securityServer.contains("ealg=aes"))
                                 it.setEncryption(
-                                    IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, ck.toByteArray())
+                                    IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck)
                                 )
                         }
-                        .buildTransportModeTransform(pcscf!!, mySPI2)
+                        .buildTransportModeTransform(pcscfAddr, mySPI2)
 
                 ipsecManager.applyTransportModeTransform(
                     serverSocketFd,
@@ -654,76 +531,45 @@ class MainActivity : AppCompatActivity() {
                         val client = serverSocket.accept()
                         thread {
                             Log.d("PHH", "Got new client!")
-                            val input = client.getInputStream()
-                            // val reader = input.bufferedReader()
-                            val reader = input.buffered()
-                            val lines = mutableListOf<String>()
-                            val output = client.getOutputStream()
-                            lines.clear()
-                            var contentLength = 0
-                            for (line in reader.lines()) {
-                                Log.d("PHH", "Client sent $line")
-                                lines.add(line.trim())
-                                if (line.trim() == "") break
-                                if (line.contains("Content-Length"))
-                                    contentLength = extractValue(line)!!.toInt()
-                            }
+                            val clientReader = client.getInputStream().sipReader()
+                            val clientWriter = client.getOutputStream()
+                            while (true) {
+                                val msg = clientReader.parseMessage()!!
+                                Log.d("PHH", "Client sent $msg")
+                                updateStatus("Unsolicited ${msg.firstLine}")
 
-                            val cseq = lines.find { it.contains("CSeq") } ?: ""
-
-                            val fwdLine = lines.find { it.contains("Max-Forwards") }
-                            val fwd =
-                                (if (fwdLine != null) extractValue(fwdLine) else null)?.toInt()
-                                    ?: 70
-
-                            val toLine = lines.find { it.contains("To") }
-                            val fromLine = lines.find { it.contains("From") }
-                            val viaLine = lines.find { it.contains("Via") }
-                            val callIdLine = lines.find { it.contains("Call-ID") }
-
-                            updateStatus("Unsolicited ${lines[0]}")
-
-                            val dataArr = ByteArray(contentLength)
-                            val nRead = reader.read(dataArr)
-
-                            if (lines[0].contains("MESSAGE")) {
-                                Log.d("PHH", "Client read $nRead ${dataArr.toList()}")
-                                try {
-                                    parseSms(dataArr)
-                                } catch (t: Throwable) {
-                                    Log.d("PHH", "Failed parsing message", t)
+                                if (msg !is SipRequest) {
+                                    // ignore Responses or invalid messages except for logs
+                                    Log.d(
+                                        "PHH",
+                                        "Not responding to ${msg.javaClass.kotlin.qualifiedName}"
+                                    )
+                                    continue
                                 }
-                            } else {
-                                val data = String(dataArr)
-                                Log.d("PHH", "Client read $nRead $data")
+
+                                if (msg.method == SipMethod.MESSAGE) {
+                                    try {
+                                        parseSms(msg.body)
+                                    } catch (t: Throwable) {
+                                        Log.d("PHH", "Failed parsing message", t)
+                                    }
+                                }
+
+                                val reply =
+                                    SipResponse(
+                                        statusCode = 200,
+                                        statusString = "OK",
+                                        headersParam =
+                                            msg.headers.filter { (k, _) ->
+                                                k in listOf("cseq", "via", "from", "to", "call-id")
+                                            }
+                                    )
+                                Log.d("PHH", "Replying back with $reply")
+                                clientWriter.write(reply.toByteArray())
+
+                                // also send MESSAGE back for protocol ack,
+                                // need to check where to send on tcp
                             }
-
-                            val myToTag =
-                                "a" +
-                                    Random.Default.nextBytes(6)
-                                        .map { String.format("%02x", it) }
-                                        .joinToString("")
-
-                            val addToTag = if (toLine!!.contains("tag=")) "" else ";tag=$myToTag"
-
-                            val answer200 =
-                                """
-                                SIP/2.0 200 OK
-                                $viaLine
-                                $cseq
-                                $toLine$addToTag
-                                $fromLine
-                                $callIdLine
-                                Max-Forwards: ${fwd-1}
-                                Expires: 600000
-                                Content-Length: 0
-                            """.trimIndent()
-                            val answer = answer200
-                            Log.d("PHH", "Replying back with $answer")
-                            output.write(answer.replace("\n", "\r\n").toByteArray())
-                            output.write("\r\n".toByteArray())
-                            output.write("\r\n".toByteArray())
-                            client.close()
                         }
                     }
                 }
@@ -731,150 +577,105 @@ class MainActivity : AppCompatActivity() {
 
             updateStatus("Connecting to IPsec socket")
             Log.d("PHH", "Connecting to IPSec socket")
-            socketInIpsec.connect(InetSocketAddress(pcscf!!, portS))
+            socketInIpsec.connect(InetSocketAddress(pcscfAddr, portS))
             updateStatus("Connected to IPsec socket")
             Log.d("PHH", "Succeeded!")
 
             val ipsecWriter = socketInIpsec.getOutputStream()
-            val ipsecReader = socketInIpsec.getInputStream().bufferedReader()
+            val ipsecReader = socketInIpsec.getInputStream().sipReader()
 
-            // username:realm:akaresult but akaresult is raw bytes
-            val H1prefix = "$user:$realm:"
-            val H1 =
-                MessageDigest.getInstance("MD5")
-                    .digest((H1prefix.toByteArray().toList() + res).toByteArray())
-                    .toHex()
-
-            Log.d("PHH", "H1 = $H1")
-            // Method : digest url value
-            // URL in REGISTER is uri:$realm
-            val H2str = "REGISTER:sip:$realm"
-            val H2 = H2str.toMD5()
-            Log.d("PHH", "H2 = $H2str $H2")
-
-            val cnonce =
-                Random.Default.nextBytes(8).map { String.format("%02x", it) }.joinToString("")
-            Log.d("PHH", "cnonce $cnonce")
-            val nonceCount = "00000001"
-            // H1:nonce:nonceCount:clientNonce:qop:H2
-            val challStr = "$H1:$nonceb64:$nonceCount:$cnonce:auth:$H2"
-            val chall = challStr.toMD5()
-            Log.d("PHH", "chall $challStr $chall")
-            Log.d("PHH", "opaque $opaque")
-
-            tag =
-                "a" + Random.Default.nextBytes(6).map { String.format("%02x", it) }.joinToString("")
-            branch =
-                "z9hG4bK_" +
-                    Random.Default.nextBytes(6).map { String.format("%02x", it) }.joinToString("")
-
-            val opaqueAdd = if (opaque != null) ",opaque=$opaque" else ""
+            val akaDigest =
+                AkaDigest(
+                    user = user,
+                    realm = realm,
+                    uri = "sip:$realm",
+                    nonceB64 = nonceB64,
+                    opaque = wwwAuthenticateParams["opaque"],
+                    akaResult = akaResult,
+                )
 
             // Contact +sip.instance="<urn:gsma:imei:86687905-321566-0>";
+            val branch = msg.headers["via"]!![0].getParams().component2()["branch"]!!
             val msg2 =
-                """
-                            REGISTER sip:ims.mnc$mnc.mcc$mcc.3gppnetwork.org SIP/2.0
+                SipRequest(
+                    SipMethod.REGISTER,
+                    "sip:$realm",
+                    msg.headers +
+                        // via/contact only IP changes: somehow make it variable?
+                        // for further register refreshes, auth and cseq only should be incremented
+                        """
                             Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
-                            From: <sip:$user>;tag=$tag
-                            To: <sip:$user>
-                            Call-ID: $callId
-                            Max-Forwards: 70
-                            Expires: 600000
-                            User-Agent: Xiaomi__Android_12_MIUI220114
-                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="<urn:gsma:imei:$imeiStr>";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
-                            Supported: path, gruu, sec-agree
-                            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                            Authorization: Digest username="$user",realm="$realm",nonce="$nonceb64",uri="sip:$realm",response="$chall",algorithm=AKAv1-MD5,cnonce="$cnonce",qop=auth,nc=$nonceCount$opaqueAdd
-                            Require: sec-agree
-                            Proxy-Require: sec-agree
-                            $secClient
+                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            Authorization: $akaDigest
                             Security-Verify: $securityServer
                             CSeq: 2 REGISTER
-                            Content-Length: 0
-                        """.trimIndent()
+                        """.toSipHeadersMap()
+                )
 
             updateStatus("Sending register 2")
             Log.d("PHH", "Sending $msg2")
-            ipsecWriter.write(msg2.replace("\n", "\r\n").toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
+            ipsecWriter.write(msg2.toByteArray())
 
-            var myPhoneNumber = ""
-            var mySip = ""
-            var svcRoute = mutableListOf<String>()
-            var path = ""
-            lines.clear()
-            for (line in ipsecReader.lines()) {
-                lines.add(line.trim())
-                Log.d("PHH", "IPSEC Received < $line")
-                if (line.toLowerCase().startsWith("p-associated-uri")) {
-                    val uri = extractValue(line)
-                    if (uri!!.contains("tel:")) {
-                        val phoneNumberRegex = Regex("<tel:([0-9+-]+)>")
-                        myPhoneNumber = phoneNumberRegex.find(uri)!!.groupValues[1]
-                    } else if (mySip == "" && uri!!.contains("sip:")) {
-                        val sipRegex = Regex("<sip:([^>]+)>")
-                        mySip = sipRegex.find(uri)!!.groupValues[1]
-                    }
+            val reply2 = ipsecReader.parseMessage()!!
+            Log.d("PHH", "Received $reply2")
+            // require reply 200 ?
+            val associatedUri =
+                reply2.headers["p-associated-uri"]!!.map {
+                    it.trimStart('<').trimEnd('>').split(':')
                 }
-                if (line.startsWith("Service-Route")) {
-                    svcRoute.add(extractValue(line)!!)
-                }
-                if (line.startsWith("Path")) path = extractValue(line)!!
+            val myPhoneNumber = associatedUri.first { it[0] == "tel" }[1]
+            val mySip = associatedUri.first { it[0] == "sip" }[1]
+            val route =
+                (reply2.headers.getOrDefault("service-route", emptyList()) +
+                        reply2.headers.getOrDefault("path", emptyList()))
+                    .toSet() // set to remove duplicates
+                    .joinToString(", ")
+            updateStatus("Received register 2 answer ${reply2.firstLine}, phone $myPhoneNumber")
 
-                if (line.trim() == "") break
-            }
-            updateStatus("Received register 2 answer ${lines[0]}, phone $myPhoneNumber")
-
-            val route = (listOf(path) + svcRoute).joinToString(", ")
             Log.d("PHH", "Got my sip = $mySip, my number = $myPhoneNumber")
 
-            // contact: ;+sip.instance="<urn:gsma:imei:86687905-321566-0>"
             val msg3 =
-                """
-                            SUBSCRIBE sip:$mySip SIP/2.0
-                            Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=$branch;rport
+                SipRequest(
+                    SipMethod.SUBSCRIBE,
+                    "sip:$mySip",
+                    """
+                            Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=z9hG4bK_test1234;rport
                             P-Preferred-Identity: <sip:$mySip>
-                            From: <sip:$mySip>;tag=$tag
+                            From: <sip:$mySip>
                             To: <sip:$mySip>
-                            Call-ID: $callId
                             Event: reg
-                            Max-Forwards: 70
                             Expires: 600000
                             Route: $route
-                            User-Agent: XXiaomi__Android_12_MIUI220208
-                            Contact: <sip:$imsi@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
-                            Supported: path, gruu, sec-agree
+                            Contact: <sip:$myPhoneNumber@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                            Supported: sec-agree
                             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                            Authorization: Digest username="$user",realm="$realm",nonce="$nonceb64",uri="sip:$realm",response="$chall",algorithm=AKAv1-MD5,cnonce="$cnonce",qop=auth,nc=$nonceCount$opaqueAdd
                             Require: sec-agree
                             Proxy-Require: sec-agree
-                            $secClient
                             Security-Verify: $securityServer
-                            CSeq: 3 SUBSCRIBE
-                            Content-Length: 0
-                        """.trimIndent()
+                        """.toSipHeadersMap()
+                )
 
             Log.d("PHH", "Sending $msg3")
 
             updateStatus("Subscribing...")
-            ipsecWriter.write(msg3.replace("\n", "\r\n").toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
-            ipsecWriter.write("\r\n".toByteArray())
+            ipsecWriter.write(msg3.toByteArray())
 
-            lines.clear()
-            for (line in ipsecReader.lines()) {
-                lines.add(line.trim())
-                Log.d("PHH", "IPSEC Received < $line")
-                if (line.trim() == "") break
-            }
+            val reply3 = ipsecReader.parseMessage()!!
+            Log.d("PHH", "IPSEC Received < $reply3")
 
-            updateStatus("Subscribe returned ${lines[0]}")
-
+            updateStatus("Subscribe returned ${reply3.firstLine}}")
+            // TODO check reply 200?
             Log.d("PHH", "End of susbcribe answer")
 
+            /*
             if (false) {
                 val targetPhoneNumber = "XXXXXXX"
+
+                val smsManager =
+                    getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
+                val smscStr = smsManager.smscAddress
+                val smscMatchRegex = Regex("([0-9]+)")
+                val smsc = smscMatchRegex.find(smscStr!!)!!.groupValues[1]
 
                 val sms = encodeSms(smsc, targetPhoneNumber, "not hello")
                 val msg4 =
@@ -914,9 +715,12 @@ class MainActivity : AppCompatActivity() {
                 updateStatus("SMS returned ${lines[0]}")
                 Log.d("PHH", "End of send SMS return")
             }
+            */
 
-            for (line in ipsecReader.lines()) {
-                Log.d("PHH", "IPSEC Received < $line")
+            while (true) {
+                val msg5 = ipsecReader.parseMessage()
+                if (msg5 == null) break
+                Log.d("PHH", "IPSEC Received < $msg5")
             }
 
             Log.d("PHH", "End of socket")
