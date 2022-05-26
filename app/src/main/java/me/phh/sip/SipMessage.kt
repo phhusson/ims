@@ -13,6 +13,7 @@ enum class SipMethod {
     BYE,
     OPTIONS,
     MESSAGE,
+    NOTIFY,
 }
 
 typealias SipStatusCode = Int
@@ -285,65 +286,17 @@ fun SipReader.parseMessage(): SipMessage? {
     val firstLineSplit = firstLine.split(" ")
     when (firstLineSplit[0]) {
         // TODO: also check last element in line is SIP/2.0?
-        "REGISTER" ->
+        "REGISTER",
+        "SUBSCRIBE",
+        "INVITE",
+        "ACK",
+        "CANCEL",
+        "BYE",
+        "OPTIONS",
+        "MESSAGE",
+        "NOTIFY" ->
             return SipRequest(
-                method = SipMethod.REGISTER,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "SUBSCRIBE" ->
-            return SipRequest(
-                method = SipMethod.SUBSCRIBE,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "INVITE" ->
-            return SipRequest(
-                method = SipMethod.INVITE,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "ACK" ->
-            return SipRequest(
-                method = SipMethod.ACK,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "CANCEL" ->
-            return SipRequest(
-                method = SipMethod.CANCEL,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "BYE" ->
-            return SipRequest(
-                method = SipMethod.BYE,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "OPTIONS" ->
-            return SipRequest(
-                method = SipMethod.OPTIONS,
-                destination = firstLineSplit[1],
-                headersParam = headers,
-                body = body,
-                autofill = false,
-            )
-        "MESSAGE" ->
-            return SipRequest(
-                method = SipMethod.MESSAGE,
+                method = SipMethod.valueOf(firstLineSplit[0]),
                 destination = firstLineSplit[1],
                 headersParam = headers,
                 body = body,
