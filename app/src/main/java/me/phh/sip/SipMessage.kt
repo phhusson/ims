@@ -26,7 +26,34 @@ abstract class SipMessage() {
     abstract val firstLine: String
     abstract val headers: SipHeadersMap
     abstract val body: ByteArray
-    abstract fun toByteArray(): ByteArray
+
+    // serialize message for sending
+    fun toByteArray(): ByteArray =
+        this.headers
+            .asSequence()
+            .map {
+                // regroup headers that don't like being split when sending
+                (header, values) ->
+                when (header) {
+                    "allow",
+                    "supported" -> header to listOf(values.joinToString(", "))
+                    else -> header to values
+                }
+            }
+            .fold(
+                emptyList<String>(),
+                { lines, (header, values) ->
+                    lines +
+                        values.map {
+                            "${header.replaceFirstChar(Char::titlecase)}: ${it.toString()}"
+                        }
+                }
+            )
+            .map { it.toByteArray() }
+            .plus(listOf(ByteArray(0), this.body))
+            .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
+
+    override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
 }
 
 fun randomHexString(bytes: Int): String =
@@ -48,27 +75,6 @@ open class SipCommonMessage(
     init {
         headers = if (autofill) completeHeaders() else headersParam
     }
-    // serialize message for sending
-    override fun toByteArray(): ByteArray =
-        this.headers
-            .asSequence()
-            .map {
-                // regroup headers that don't like being split when sending
-                (header, values) ->
-                when (header) {
-                    "allow",
-                    "supported" -> header to listOf(values.joinToString(", "))
-                    else -> header to values
-                }
-            }
-            .fold(
-                emptyList<String>(),
-                { lines, (header, values) -> lines + values.map { "$header: ${it.toString()}" } }
-            )
-            .map { it.toByteArray() }
-            .plus(listOf(ByteArray(0), this.body))
-            .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
-
     override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
 
     private fun completeHeaders(): SipHeadersMap {
@@ -143,7 +149,6 @@ data class SipRequest(
 
     override val firstLine = message.firstLine
     override val headers = message.headers
-    override fun toByteArray(): ByteArray = message.toByteArray()
     override fun toString(): String = message.toString()
 
     private fun completeRequestHeaders(): SipHeadersMap {
@@ -176,7 +181,6 @@ data class SipResponse(
     }
     override val firstLine = message.firstLine
     override val headers = message.headers
-    override fun toByteArray(): ByteArray = message.toByteArray()
     override fun toString(): String = message.toString()
 }
 
