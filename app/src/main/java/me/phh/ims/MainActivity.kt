@@ -400,19 +400,19 @@ class MainActivity : AppCompatActivity() {
                     SipMethod.REGISTER,
                     "sip:$realm",
                     """
-                            Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};rport
-                            From: <sip:$user>
-                            To: <sip:$user>
-                            Expires: 600000
-                            Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                        Via: SIP/2.0/TCP [$myAddr2]:${socket.localPort};rport
+                        From: <sip:$user>
+                        To: <sip:$user>
+                        Expires: 600000
+                        Contact: <sip:$imsi@[$myAddr2]:${socket.localPort};transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
 
-                            Supported: path, gruu, sec-agree
-                            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                            Authorization: Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5
-                            Require: sec-agree
-                            Proxy-Require: sec-agree
-                            $secClient
-                        """.toSipHeadersMap()
+                        Supported: path, gruu, sec-agree
+                        Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                        Authorization: Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5
+                        Require: sec-agree
+                        Proxy-Require: sec-agree
+                        $secClient
+                    """.toSipHeadersMap()
                 )
             Log.d("PHH", "Sending $msg")
 
@@ -639,20 +639,20 @@ class MainActivity : AppCompatActivity() {
                     SipMethod.SUBSCRIBE,
                     "sip:$mySip",
                     """
-                            Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=z9hG4bK_test1234;rport
-                            P-Preferred-Identity: <sip:$mySip>
-                            From: <sip:$mySip>
-                            To: <sip:$mySip>
-                            Event: reg
-                            Expires: 600000
-                            Route: $route
-                            Contact: <sip:$myPhoneNumber@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
-                            Supported: sec-agree
-                            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                            Require: sec-agree
-                            Proxy-Require: sec-agree
-                            Security-Verify: $securityServer
-                        """.toSipHeadersMap()
+                        Via: SIP/2.0/TCP [$myAddr2]:${socketInIpsec.localPort};branch=z9hG4bK_test1234;rport
+                        P-Preferred-Identity: <sip:$mySip>
+                        From: <sip:$mySip>
+                        To: <sip:$mySip>
+                        Event: reg
+                        Expires: 600000
+                        Route: $route
+                        Contact: <sip:$myPhoneNumber@[$myAddr2]:${socketInIpsec.localPort};transport=tcp>;expires=600000;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
+                        Supported: sec-agree
+                        Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                        Require: sec-agree
+                        Proxy-Require: sec-agree
+                        Security-Verify: $securityServer
+                    """.toSipHeadersMap()
                 )
 
             Log.d("PHH", "Sending $msg3")
