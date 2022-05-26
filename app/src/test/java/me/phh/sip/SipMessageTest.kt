@@ -153,7 +153,7 @@ class SipMessageTests {
     }
 
     @Test
-    fun `check autofill adds headers`() {
+    fun `check autofill adds missing headers`() {
         val headers = """
             From: test
             Via: test
@@ -166,8 +166,27 @@ class SipMessageTests {
             )
         require(message.firstLine == "REGISTER xxx SIP/2.0")
         require(message.headers["cseq"] == listOf("1 REGISTER"))
-        require(message.headers["from"]!![0].contains(";tag=") != null)
+        require(message.headers["from"]!![0].contains(";tag="))
         require(message.headers["via"]!![0].getParams().component2()["branch"] != null)
+    }
+
+    @Test
+    fun `check autofill does not replace headers`() {
+        val headers =
+            """
+            From: test;tag=foo
+            Via: test;branch=123
+            CSeq: 123 test
+        """.toSipHeadersMap()
+        val message =
+            SipRequest(
+                method = SipMethod.REGISTER,
+                destination = "xxx",
+                headersParam = headers,
+            )
+        require(message.headers["cseq"] == listOf("123 test"))
+        require(message.headers["from"]!![0].contains(";tag=foo"))
+        require(message.headers["via"]!![0].getParams().component2()["branch"] == "123")
     }
 
     @Test
@@ -192,6 +211,6 @@ class SipMessageTests {
                 headersParam = headers,
                 autofill = false
             )
-        require(message.toString() == "REGISTER xxx SIP/2.0\r\nallow: one, two, three\r\n\r\n")
+        require(message.toString() == "REGISTER xxx SIP/2.0\r\nAllow: one, two, three\r\n\r\n")
     }
 }
