@@ -310,7 +310,7 @@ fun SipReader.parseMessage(): SipMessage? {
             val code = firstLineSplit.getOrNull(1)?.toInt() ?: return null
             return SipResponse(
                 statusCode = code,
-                statusString = firstLineSplit.getOrNull(2) ?: "",
+                statusString = firstLineSplit.slice(2..firstLineSplit.size - 1).joinToString(" "),
                 headersParam = headers,
                 body = body,
                 autofill = false,
