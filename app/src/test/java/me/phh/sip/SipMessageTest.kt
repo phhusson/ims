@@ -214,6 +214,7 @@ class SipMessageTests {
                 headersParam = headers,
                 autofill = false
             )
-        require(message.toString() == "REGISTER xxx SIP/2.0\r\nAllow: one, two, three\r\n\r\n")
+        require(String(message.toByteArray()) == "REGISTER xxx SIP/2.0\r\nAllow: one, two, three\r\n\r\n")
+        require(message.toString() == "REGISTER xxx SIP/2.0\n> Allow: one, two, three\n> \n> ")
     }
 }

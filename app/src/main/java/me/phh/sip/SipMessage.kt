@@ -51,9 +51,9 @@ abstract class SipMessage() {
             )
             .map { it.toByteArray() }
             .plus(listOf(ByteArray(0), this.body))
-            .fold(this.firstLine.toByteArray(), { msg, line -> msg + "\r\n".toByteArray() + line })
-
-    override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
+            .fold(this.firstLine.toByteArray(), {
+                msg, line -> msg + "\r\n".toByteArray() + line
+            })
 }
 
 open class SipCommonMessage(
@@ -72,7 +72,10 @@ open class SipCommonMessage(
     init {
         headers = if (autofill) completeHeaders() else headersParam
     }
-    override fun toString(): String = String(toByteArray(), Charsets.US_ASCII)
+
+    override fun toString(): String =
+        String(toByteArray(), Charsets.US_ASCII)
+            .replace("\r\n", "\n> ")
 
     private fun completeHeaders(): SipHeadersMap {
         /* some headers can be automatically generated:
