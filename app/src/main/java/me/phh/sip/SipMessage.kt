@@ -1,4 +1,4 @@
-package me.phh.ims
+package me.phh.sip
 
 /* type definitions */
 
