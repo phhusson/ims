@@ -387,11 +387,11 @@ class MainActivity : AppCompatActivity() {
             val reader = socket.getInputStream().sipReader()
             val localPort = socketInIpsec.localPort
 
-            val mySPI1 = ipsecManager.allocateSecurityParameterIndex(myAddr)
-            val mySPI2 = ipsecManager.allocateSecurityParameterIndex(myAddr, mySPI1.spi + 1)
+            val mySPIC = ipsecManager.allocateSecurityParameterIndex(myAddr)
+            val mySPIS = ipsecManager.allocateSecurityParameterIndex(myAddr, mySPIC.spi + 1)
 
             fun secClient(ealg: String, alg: String) =
-                "ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPI1.spi};spi-s=${mySPI2.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+                "ipsec-3gpp;prot=esp;mod=trans;spi-c=${mySPIC.spi};spi-s=${mySPIS.spi};port-c=${localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
             val secClientLine =
                 "Security-Client: ${secClient("null", "hmac-sha-1-96")}, ${secClient("aes-cbc", "hmac-sha-1-96")}"
             val msg =
@@ -475,7 +475,7 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
                     }
-                    .buildTransportModeTransform(pcscfAddr, mySPI1)
+                    .buildTransportModeTransform(pcscfAddr, mySPIC)
 
             ipsecManager.applyTransportModeTransform(
                 socketInIpsec,
@@ -516,7 +516,7 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        .buildTransportModeTransform(pcscfAddr, mySPI2)
+                        .buildTransportModeTransform(pcscfAddr, mySPIS)
 
                 ipsecManager.applyTransportModeTransform(
                     serverSocketFd,

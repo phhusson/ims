@@ -74,7 +74,7 @@ data class AkaDigest(
 
     fun increment() {
         nonceCount = "%08d".format(nonceCount.toInt() + 1)
-        cnonce = randomBytes(8).toHex()
+        cnonce = randomBytes(8).toHex() // 16 bytes on some traces
         digest = "$H1:$nonceB64:$nonceCount:$cnonce:auth:$H2".toMD5()
         Log.d("PHH", "chall $H1:$nonceB64:$nonceCount:$cnonce:auth:$H2 $digest")
     }
