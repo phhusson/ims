@@ -4,9 +4,9 @@ import android.telephony.TelephonyManager
 import android.util.Base64
 import android.util.Log
 
-data class AkaResult(val res: ByteArray, val ck: ByteArray, val ik: ByteArray)
+data class SipAkaResult(val res: ByteArray, val ck: ByteArray, val ik: ByteArray)
 
-fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): AkaResult {
+fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
     val nonce = Base64.decode(nonceB64, Base64.DEFAULT)
 
     val rand = nonce.take(16)
@@ -50,16 +50,16 @@ fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): AkaResult {
 
     Log.d("PHH", "Got res $res ck $ck ik $ik")
 
-    return AkaResult(res = res.toByteArray(), ck = ck.toByteArray(), ik = ik.toByteArray())
+    return SipAkaResult(res = res.toByteArray(), ck = ck.toByteArray(), ik = ik.toByteArray())
 }
 
-data class AkaDigest(
+data class SipAkaDigest(
     val user: String,
     val realm: String,
     val uri: String,
     val nonceB64: String,
     val opaque: String?,
-    private val akaResult: AkaResult
+    private val akaResult: SipAkaResult
 ) {
     var nonceCount: String = "0"
     var cnonce: String = ""

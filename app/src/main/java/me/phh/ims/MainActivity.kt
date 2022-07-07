@@ -588,7 +588,7 @@ class MainActivity : AppCompatActivity() {
             val ipsecReader = socketInIpsec.getInputStream().sipReader()
 
             val akaDigest =
-                AkaDigest(
+                SipAkaDigest(
                     user = user,
                     realm = realm,
                     uri = "sip:$realm",
