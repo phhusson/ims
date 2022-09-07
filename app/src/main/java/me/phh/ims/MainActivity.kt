@@ -449,10 +449,13 @@ class MainActivity : AppCompatActivity() {
             val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
             val serverSPIC = ipsecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
 
+            // pad key to 160 bits (original ik size 128 + 32 bits)
+            val hmac_key = akaResult.ik + ByteArray(4)
+
             val outgoingTransform =
                 IpSecTransform.Builder(this)
                     .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
+                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
                     )
                     .also {
                         if (securityServerParams["ealg"] == "aes-cbc") {
@@ -466,7 +469,7 @@ class MainActivity : AppCompatActivity() {
             val ingoingTransform =
                 IpSecTransform.Builder(this)
                     .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
+                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
                     )
                     .also {
                         if (securityServerParams["ealg"] == "aes-cbc") {
@@ -493,7 +496,7 @@ class MainActivity : AppCompatActivity() {
                 val outgoingTransformC =
                     IpSecTransform.Builder(this)
                         .setAuthentication(
-                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
+                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
                         )
                         .also {
                             if (securityServerParams["ealg"] == "aes-cbc") {
@@ -507,7 +510,7 @@ class MainActivity : AppCompatActivity() {
                 val ingoingTransformC =
                     IpSecTransform.Builder(this)
                         .setAuthentication(
-                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, akaResult.ik, 96)
+                            IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
                         )
                         .also {
                             if (securityServerParams["ealg"] == "aes-cbc") {
