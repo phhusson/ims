@@ -24,6 +24,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name="me.phh.ims.PhhImsService"
+            android:exported="true"
+            android:directBootAware="true"
+            android:persistent="true"
+            android:permission="android.permission.BIND_IMS_SERVICE">
+            <!-- directBootAware probably not needed see
+            https://developer.android.com/training/articles/direct-boot.html -->
+            <!-- persistent: requires app to be built as a system app: how? -->
+            <!-- permission also requires app to be built as system app:
+                 so any ImsService implementations defined here are required to be System
+                 applications and must reside in the /system/priv-app/ or /product/priv-app/
+            folder to grant the appropriate permissions... -->
+        <meta-data android:name="android.telephony.ims.MMTEL_FEATURE" android:value="true"/>
+        <meta-data android:name="android.telephony.ims.EMERGENCY_MMTEL_FEATURE" android:value="true"/>
+        <intent-filter>
+            <action android:name="android.telephony.ims.ImsService" />
+        </intent-filter>
+      </service>
     </application>
 
 </manifest>
