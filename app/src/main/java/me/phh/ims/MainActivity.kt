@@ -816,6 +816,6 @@ class MainActivity : AppCompatActivity() {
             connectIke(this)
         }*/
 
-        thread { launchVolteNetwork() }
+        // thread { launchVolteNetwork() }
     }
 }
