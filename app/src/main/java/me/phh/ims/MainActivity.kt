@@ -10,10 +10,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.system.OsConstants.AF_INET
 import android.system.OsConstants.AF_INET6
+import android.telephony.Rlog
 import android.telephony.SmsMessage
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
-import android.util.Log
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.FileDescriptor
@@ -41,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         nm.registerDefaultNetworkCallback(
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(n: Network) {
-                    Log.d("PHH", "Got network available $n")
+                    Rlog.d("PHH", "Got network available $n")
                     network = n
                 }
             }
@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         if (mnc.length == 2) mnc = "0$mnc"
         val imsi = tm.subscriberId
 
-        Log.d("PHH", "Got mcc $mcc mnc $mnc imsi $imsi")
+        Rlog.d("PHH", "Got mcc $mcc mnc $mnc imsi $imsi")
 
         val ikeParamsBuilder = IkeSessionParams.Builder()
         // paramsBuilder.setDscp(26)
@@ -151,7 +151,7 @@ class MainActivity : AppCompatActivity() {
                                 try {
                                     p0.run()
                                 } catch (t: Throwable) {
-                                    Log.d("PHH", "Executor failed with", t)
+                                    Rlog.d("PHH", "Executor failed with", t)
                                 }
                             }
                         }
@@ -159,11 +159,11 @@ class MainActivity : AppCompatActivity() {
                 },
                 object : IkeSessionCallback {
                     override fun onOpened(p0: IkeSessionConfiguration) {
-                        Log.d(
+                        Rlog.d(
                             "PHH",
                             "IKE session opened ${p0.ikeSessionConnectionInfo.localAddress} ${p0.ikeSessionConnectionInfo.remoteAddress}"
                         )
-                        Log.d("PHH", "Bound network is ${nm.boundNetworkForProcess}")
+                        Rlog.d("PHH", "Bound network is ${nm.boundNetworkForProcess}")
                         ipsecTunnel =
                             ipsecManager.javaClass
                                 .getMethod(
@@ -182,13 +182,13 @@ class MainActivity : AppCompatActivity() {
                         val _pcscf =
                             p0.javaClass.getMethod("getPcscfServers").invoke(p0)
                                 as List<InetAddress>
-                        Log.d("PHH", "IKE session pcscf ${_pcscf.toList()}")
+                        Rlog.d("PHH", "IKE session pcscf ${_pcscf.toList()}")
                         pcscf = _pcscf[0]
                         sessionConfiguration = p0
                     }
 
                     override fun onClosed() {
-                        Log.d("PHH", "IKE session closed")
+                        Rlog.d("PHH", "IKE session closed")
                     }
                 },
                 object : ChildSessionCallback {
@@ -196,7 +196,7 @@ class MainActivity : AppCompatActivity() {
                         val internalAddress =
                             p0.javaClass.getMethod("getInternalAddresses").invoke(p0)
                                 as List<LinkAddress>
-                        Log.d("PHH", "IKE child session opened $p0 ${internalAddress.toList()}")
+                        Rlog.d("PHH", "IKE child session opened $p0 ${internalAddress.toList()}")
                         for (addr in internalAddress) {
                             Class.forName("android.net.IpSecManager\$IpSecTunnelInterface")
                                 .getMethod("addAddress", InetAddress::class.java, Int::class.java)
@@ -204,7 +204,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         childConfiguration = p0
 
-                        Log.d(
+                        Rlog.d(
                             "PHH",
                             "VoWifi tunnel ready at interface ${ipsecTunnel!!.javaClass.getMethod("getInterfaceName")}"
                         )
@@ -297,11 +297,11 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     override fun onClosed() {
-                        Log.d("PHH", "IKE child session closed")
+                        Rlog.d("PHH", "IKE child session closed")
                     }
 
                     override fun onIpSecTransformCreated(p0: IpSecTransform, p1: Int) {
-                        Log.d("PHH", "IPSec session created $p0 $p1")
+                        Rlog.d("PHH", "IPSec session created $p0 $p1")
 
                         ipsecManager.javaClass
                             .getMethod(
@@ -314,13 +314,14 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     override fun onIpSecTransformDeleted(p0: IpSecTransform, p1: Int) {
-                        Log.d("PHH", "IPSec session deleted $p0 $p1")
+                        Rlog.d("PHH", "IPSec session deleted $p0 $p1")
                     }
                 }
             )
     }
 
     fun updateStatus(str: String) {
+        Rlog.d("PHH", str)
         runOnUiThread {
             val status = findViewById<TextView>(R.id.status)
             status.text = str + "\n" + status.text
@@ -347,12 +348,12 @@ class MainActivity : AppCompatActivity() {
         val imsi = tm.subscriberId
 
         Thread.sleep(3000)
-        Log.d("PHH", "XCAP+WIFI transport available ${network}")
+        Rlog.d("PHH", "XCAP+WIFI transport available ${network}")
         val (myAddr, pcscfAddr) =
             {
                 val lp = nm.getLinkProperties(network)
                 val caps = nm.getNetworkCapabilities(network)
-                Log.d("PHH", " caps = $caps, lp = $lp")
+                Rlog.d("PHH", " caps = $caps, lp = $lp")
                 val pcscfs =
                     lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
                 lp.linkAddresses[0].address to pcscfs[0]
@@ -361,7 +362,7 @@ class MainActivity : AppCompatActivity() {
         val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
         val user = "$imsi@ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
 
-        Log.d("PHH", "My addr $myAddrString")
+        Rlog.d("PHH", "My addr $myAddrString")
         try {
             updateStatus("Connecting to SIP")
 
@@ -370,7 +371,7 @@ class MainActivity : AppCompatActivity() {
 
             updateStatus("Registering 1")
 
-            Log.d("PHH", "Socket opened!")
+            Rlog.d("PHH", "Socket opened!")
             val myAddr2 = socket.localAddress.hostAddress
 
             val socketInIpsec = socketFactory.createSocket()
@@ -412,15 +413,15 @@ class MainActivity : AppCompatActivity() {
                         $secClientLine
                     """.toSipHeadersMap()
                 )
-            Log.d("PHH", "Sending $msg")
+            Rlog.d("PHH", "Sending $msg")
 
             writer.write(msg.toByteArray())
 
             val reply = reader.parseMessage()!!
-            Log.d("PHH", "received: $reply")
+            Rlog.d("PHH", "received: $reply")
             // XXX keep open for TCP keepalive
             socket.close()
-            Log.d("PHH", "Socket closed!")
+            Rlog.d("PHH", "Socket closed!")
 
             updateStatus("Register 1 answered with ${reply.firstLine}")
             // assert SipResponse && code 401?
@@ -531,17 +532,17 @@ class MainActivity : AppCompatActivity() {
                     while (true) {
                         val client = serverSocket.accept()
                         thread {
-                            Log.d("PHH", "Got new client!")
+                            Rlog.d("PHH", "Got new client!")
                             val clientReader = client.getInputStream().sipReader()
                             val clientWriter = client.getOutputStream()
                             while (true) {
                                 val msg = clientReader.parseMessage()!!
-                                Log.d("PHH", "Client sent $msg")
+                                Rlog.d("PHH", "Client sent $msg")
                                 updateStatus("Unsolicited ${msg.firstLine}")
 
                                 if (msg !is SipRequest) {
                                     // ignore Responses or invalid messages except for logs
-                                    Log.d(
+                                    Rlog.d(
                                         "PHH",
                                         "Not responding to ${msg.javaClass.kotlin.qualifiedName}"
                                     )
@@ -552,7 +553,7 @@ class MainActivity : AppCompatActivity() {
                                     try {
                                         parseSms(msg.body)
                                     } catch (t: Throwable) {
-                                        Log.d("PHH", "Failed parsing message", t)
+                                        Rlog.d("PHH", "Failed parsing message", t)
                                     }
                                 }
 
@@ -565,7 +566,7 @@ class MainActivity : AppCompatActivity() {
                                                 k in listOf("cseq", "via", "from", "to", "call-id")
                                             }
                                     )
-                                Log.d("PHH", "Replying back with $reply")
+                                Rlog.d("PHH", "Replying back with $reply")
                                 clientWriter.write(reply.toByteArray())
 
                                 // also send MESSAGE back for protocol ack,
@@ -577,10 +578,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             updateStatus("Connecting to IPsec socket")
-            Log.d("PHH", "Connecting to IPSec socket")
+            Rlog.d("PHH", "Connecting to IPSec socket")
             socketInIpsec.connect(InetSocketAddress(pcscfAddr, portS))
             updateStatus("Connected to IPsec socket")
-            Log.d("PHH", "Succeeded!")
+            Rlog.d("PHH", "Succeeded!")
 
             val ipsecWriter = socketInIpsec.getOutputStream()
             val ipsecReader = socketInIpsec.getInputStream().sipReader()
@@ -614,11 +615,11 @@ class MainActivity : AppCompatActivity() {
                 )
 
             updateStatus("Sending register 2")
-            Log.d("PHH", "Sending $msg2")
+            Rlog.d("PHH", "Sending $msg2")
             ipsecWriter.write(msg2.toByteArray())
 
             val reply2 = ipsecReader.parseMessage()!!
-            Log.d("PHH", "Received $reply2")
+            Rlog.d("PHH", "Received $reply2")
             // require reply 200 ?
             val associatedUri =
                 reply2.headers["p-associated-uri"]!!.map {
@@ -633,7 +634,7 @@ class MainActivity : AppCompatActivity() {
                     .joinToString(", ")
             updateStatus("Received register 2 answer ${reply2.firstLine}, phone $myPhoneNumber")
 
-            Log.d("PHH", "Got my sip = $mySip, my number = $myPhoneNumber")
+            Rlog.d("PHH", "Got my sip = $mySip, my number = $myPhoneNumber")
 
             val msg3 =
                 SipRequest(
@@ -656,17 +657,17 @@ class MainActivity : AppCompatActivity() {
                         ("security-verify" to securityServer)
                 )
 
-            Log.d("PHH", "Sending $msg3")
+            Rlog.d("PHH", "Sending $msg3")
 
             updateStatus("Subscribing...")
             ipsecWriter.write(msg3.toByteArray())
 
             val reply3 = ipsecReader.parseMessage()!!
-            Log.d("PHH", "IPSEC Received < $reply3")
+            Rlog.d("PHH", "IPSEC Received < $reply3")
 
             updateStatus("Subscribe returned ${reply3.firstLine}}")
             // TODO check reply 200?
-            Log.d("PHH", "End of susbcribe answer")
+            Rlog.d("PHH", "End of susbcribe answer")
 
             /*
             if (false) {
@@ -700,7 +701,7 @@ class MainActivity : AppCompatActivity() {
                 """.trimIndent()
 
                 updateStatus("Sending SMS")
-                Log.d("PHH", "Sending $msg4")
+                Rlog.d("PHH", "Sending $msg4")
 
                 ipsecWriter.write(msg4.replace("\n", "\r\n").toByteArray())
                 ipsecWriter.write("\r\n".toByteArray())
@@ -710,25 +711,25 @@ class MainActivity : AppCompatActivity() {
                 lines.clear()
                 for (line in ipsecReader.lines()) {
                     lines.add(line.trim())
-                    Log.d("PHH", "IPSEC Received < $line")
+                    Rlog.d("PHH", "IPSEC Received < $line")
                     if (line.trim() == "") break
                 }
                 updateStatus("SMS returned ${lines[0]}")
-                Log.d("PHH", "End of send SMS return")
+                Rlog.d("PHH", "End of send SMS return")
             }
             */
 
             while (true) {
                 val msg5 = ipsecReader.parseMessage()
                 if (msg5 == null) break
-                Log.d("PHH", "IPSEC Received < $msg5")
+                Rlog.d("PHH", "IPSEC Received < $msg5")
             }
 
-            Log.d("PHH", "End of socket")
+            Rlog.d("PHH", "End of socket")
 
             socketInIpsec.close()
         } catch (e: Throwable) {
-            Log.d("PHH", "Connecting SIP socket", e)
+            Rlog.d("PHH", "Connecting SIP socket", e)
         }
     }
 
@@ -799,7 +800,7 @@ class MainActivity : AppCompatActivity() {
 
         // Prepend fake 0 for 0 scAddress ?!?
         val msg = SmsMessage.createFromPdu((listOf(0.toByte()) + currentMsg).toByteArray())
-        Log.d(
+        Rlog.d(
             "PHH",
             "Received SMS from ${msg.originatingAddress} also ${msg.displayOriginatingAddress} val ${msg.messageBody}"
         )
