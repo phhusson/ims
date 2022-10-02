@@ -9,4 +9,11 @@ fun ByteArray.toMD5(): String = MessageDigest.getInstance("MD5").digest(this).to
 
 fun String.toMD5(): String = toByteArray().toMD5()
 
+fun String.hexToByteArray(): ByteArray {
+    // from https://stackoverflow.com/a/66614516
+    check(length % 2 == 0) { "Must have an even length" }
+
+    return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+}
+
 fun randomBytes(count: Int): ByteArray = Random.Default.nextBytes(count)
