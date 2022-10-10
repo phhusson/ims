@@ -265,19 +265,20 @@ private val splitAuthValue = """^([^=]+)="?([^"]*)"?""".toRegex()
 fun SipHeader.getAuthValues(): Pair<String, Map<String, String?>> =
     splitParams(this, splitAuth, splitAuthValue, false)
 
-fun String.toSipHeadersMap(): SipHeadersMap = this.lines().mapNotNull(::sipHeaderOf).toMap()
+fun parseHeaders(sequence: Sequence<String>): SipHeadersMap =
+    sequence.fold(
+        emptyMap<String, List<SipHeader>>(),
+        fold@{ headers, line ->
+            val (header, value) = sipHeaderOf(line) ?: return@fold headers
+            val oldVal = headers.get(header) ?: emptyList<SipHeader>()
 
-fun SipReader.parseHeaders(): SipHeadersMap =
-    this.lineSequence()
-        .fold(
-            emptyMap<String, List<SipHeader>>(),
-            fold@{ headers, line ->
-                val (header, value) = sipHeaderOf(line) ?: return@fold headers
-                val oldVal = headers.get(header) ?: emptyList<SipHeader>()
+            headers + (header to oldVal + value)
+        }
+    )
 
-                headers + (header to oldVal + value)
-            }
-        )
+fun String.toSipHeadersMap(): SipHeadersMap = parseHeaders(this.lines().asSequence())
+
+fun SipReader.parseHeaders(): SipHeadersMap = parseHeaders(this.lineSequence())
 
 fun SipReader.parseMessage(): SipMessage? {
     val firstLine = this.readLine() ?: return null

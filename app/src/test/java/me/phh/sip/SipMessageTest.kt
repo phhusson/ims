@@ -204,8 +204,10 @@ class SipMessageTests {
 
     @Test
     fun `check serialization regroups allow`() {
-        val headers = """
-            Allow: one, two, three
+        val headers =
+            """
+            Allow: one, two
+            Allow: three
         """.toSipHeadersMap()
         val message =
             SipRequest(
@@ -219,5 +221,21 @@ class SipMessageTests {
                 "REGISTER xxx SIP/2.0\r\nAllow: one, two, three\r\n\r\n"
         )
         require(message.toString() == "REGISTER xxx SIP/2.0\n> Allow: one, two, three\n> \n> ")
+    }
+
+    @Test
+    fun `check header manipulation`() {
+        var headers =
+            """
+            From: test
+            Route: route1
+        """.toSipHeadersMap()
+        require(headers["route"] == listOf("route1"))
+
+        headers -= "route"
+        require("route" !in headers)
+
+        headers += ("route" to listOf("route2"))
+        require(headers["route"] == listOf("route2"))
     }
 }
