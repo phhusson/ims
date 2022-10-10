@@ -18,9 +18,20 @@ class PhhImsBroadcastReceiver : BroadcastReceiver() {
 }
 
 class PhhImsService : ImsService() {
+    override fun onCreate() {
+        Rlog.d("PHH", "ImsService onCreate")
+    }
+
+    // XXX one per slot id...
+    var mmTelFeature: PhhMmTelFeature? = null
     override fun createMmTelFeature(slotId: Int): MmTelFeature {
         Rlog.d("PHH", "ImsService createMmTelFeature")
-        return PhhMmTelFeature /*.getInstance*/(slotId)
+        var feature = mmTelFeature
+        if (feature == null) {
+            feature = PhhMmTelFeature(slotId)
+            mmTelFeature = feature
+        }
+        return feature
     }
     override fun createRcsFeature(slotId: Int): RcsFeature? {
         Rlog.d("PHH", "ImsService createRcsFeature")
@@ -48,10 +59,6 @@ class PhhImsService : ImsService() {
     override fun getRegistration(slotId: Int): ImsRegistrationImplBase {
         Rlog.d("PHH", "ImsService getRegistration $slotId")
         return imsRegistration
-    }
-
-    override fun onCreate() {
-        Rlog.d("PHH", "ImsService onCreate")
     }
 
     override fun onDestroy() {
