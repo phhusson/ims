@@ -14,7 +14,9 @@ import android.telephony.TelephonyManager
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.SocketException
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 
 class SipHandler(val ctxt: Context) {
     val subscriptionManager: SubscriptionManager
@@ -62,6 +64,10 @@ class SipHandler(val ctxt: Context) {
     lateinit var socket: SipConnectionTcp
     lateinit var serverSocket: SipConnectionTcpServer
 
+    var cbLock = ReentrantLock()
+    var requestCallbacks: Map<SipMethod, ((SipRequest) -> SipResponse?)> = mapOf()
+    var responseCallbacks: Map<String, ((SipResponse) -> Boolean)> = mapOf()
+
     fun parseMessage(reader: SipReader, writer: OutputStream): Boolean {
         val msg =
             try {
@@ -77,7 +83,7 @@ class SipHandler(val ctxt: Context) {
             }
         Rlog.d("PHH", "Received message $msg")
         if (msg is SipResponse) {
-            return handleResponse(msg, writer)
+            return handleResponse(msg)
         }
         if (msg !is SipRequest) {
             // invalid message,stop tryng
@@ -85,70 +91,59 @@ class SipHandler(val ctxt: Context) {
             return false
         }
 
-        val reply =
-            SipResponse(
-                statusCode = 200,
-                statusString = "OK",
-                headersParam =
-                    msg.headers
-                        .filter { (k, _) -> k in listOf("cseq", "via", "from", "to", "call-id") }
-                        .mapKeys { (k, _) ->
-                            // reply has to and from swapped
-                            when (k) {
-                                "to" -> {
-                                    "from"
-                                }
-                                "from" -> {
-                                    "to"
-                                }
-                                else -> {
-                                    k
+        val requestCb = cbLock.withLock { requestCallbacks[msg.method] }
+        var reply: SipResponse? = null
+        if (requestCb != null) {
+            reply = requestCb(msg)
+        }
+        if (reply == null) {
+            reply =
+                SipResponse(
+                    statusCode = 200,
+                    statusString = "OK",
+                    headersParam =
+                        msg.headers
+                            .filter { (k, _) ->
+                                k in listOf("cseq", "via", "from", "to", "call-id")
+                            }
+                            .mapKeys { (k, _) ->
+                                // reply has to and from swapped
+                                when (k) {
+                                    "to" -> {
+                                        "from"
+                                    }
+                                    "from" -> {
+                                        "to"
+                                    }
+                                    else -> {
+                                        k
+                                    }
                                 }
                             }
-                        }
-            )
+                )
+        }
         Rlog.d("PHH", "Replying back with $reply")
         synchronized(writer) { writer.write(reply.toByteArray()) }
 
         return true
     }
 
-    fun handleResponse(response: SipResponse, writer: OutputStream): Boolean {
-        // response must keep branch (via), tag (from->to), cseq and call-id
-        // ideally have a locked place where we store call ids we want to reply to,
-        // but for now just hardcode based on cseq patterns...
-        when (response.headers["cseq"]!![0].split(" ")[1]) {
-            "REGISTER" -> {
-                // once we get there all register must be successful
-                // on failure just abort thread, ims will restart
-                require(response.statusCode == 200)
-
-                val route =
-                    (response.headers.getOrDefault("service-route", emptyList()) +
-                            response.headers.getOrDefault("path", emptyList()))
-                        .toSet() // remove duplicates
-                        .toList()
-
-                val associatedUri =
-                    response.headers["p-associated-uri"]!!.map {
-                        it.trimStart('<').trimEnd('>').split(':')
-                    }
-                val mySip = associatedUri.first { it[0] == "sip" }[1]
-                commonHeaders +=
-                    mapOf(
-                        "route" to route,
-                        "from" to listOf("<sip:$mySip>"),
-                        "to" to listOf("<sip:$mySip>"),
-                    )
-
-                subscribe(writer, "sip:$mySip")
-            }
-            "SUBSCRIBE" -> {
-                // require(response.statusCode == 200)
-                // XXX signal error to mmtelfeature for backed off retry
-            }
+    fun handleResponse(response: SipResponse): Boolean {
+        val callId = response.headers["call-id"]?.get(0)
+        if (callId == null) {
+            // message without call-id should never happen, close connection
+            return false
+        }
+        val responseCb = cbLock.withLock { responseCallbacks[callId] }
+        if (responseCb == null) {
+            // nothing to do
+            return true
         }
 
+        if (responseCb(response)) {
+            // remove callback if done
+            cbLock.withLock { responseCallbacks -= callId }
+        }
         return true
     }
 
@@ -244,7 +239,11 @@ class SipHandler(val ctxt: Context) {
             // loop could get us banned
             return
         }
-        handleResponse(regReply, socket.writer)
+
+        cbLock.withLock {
+            responseCallbacks += (registerHeaders["call-id"]!![0] to ::handleRegister)
+        }
+        handleResponse(regReply)
 
         // we registered! Kick in thread to register every 3000s
         thread {
@@ -339,6 +338,32 @@ class SipHandler(val ctxt: Context) {
         Rlog.d("PHH", "Sending $msg")
         synchronized(writer) { writer.write(msg.toByteArray()) }
         registerCounter += 1
+    }
+
+    fun handleRegister(response: SipResponse): Boolean {
+        // once we get there all register must be successful
+        // on failure just abort thread, ims will restart
+        require(response.statusCode == 200)
+
+        val route =
+            (response.headers.getOrDefault("service-route", emptyList()) +
+                    response.headers.getOrDefault("path", emptyList()))
+                .toSet() // remove duplicates
+                .toList()
+
+        val associatedUri =
+            response.headers["p-associated-uri"]!!.map { it.trimStart('<').trimEnd('>').split(':') }
+        val mySip = associatedUri.first { it[0] == "sip" }[1]
+        commonHeaders +=
+            mapOf(
+                "route" to route,
+                "from" to listOf("<sip:$mySip>"),
+                "to" to listOf("<sip:$mySip>"),
+            )
+
+        subscribe(socket.writer, "sip:$mySip")
+        // keep callback
+        return false
     }
 
     fun subscribe(writer: OutputStream, mySip: String) {
