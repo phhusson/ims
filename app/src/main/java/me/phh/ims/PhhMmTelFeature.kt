@@ -12,6 +12,7 @@ import android.telephony.ims.stub.ImsRegistrationImplBase
 import android.telephony.ims.stub.ImsSmsImplBase
 import android.telephony.ims.stub.ImsUtImplBase
 import kotlin.concurrent.thread
+import me.phh.sip.SipHandler
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
 class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
@@ -67,9 +68,16 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
         return ImsUtImplBase()
     }
 
+    lateinit var sipHandler: SipHandler
     override fun onFeatureReady() {
         Rlog.d("PHH", "MmTelFeature $slotId onFeatureReady")
 
+        // call onRegistering first then
+        // register SIP here and call onRegistered after .. register.
+        val imsService = PhhImsService.Companion.instance!!
+        sipHandler = SipHandler(imsService)
+        sipHandler.getVolteNetwork()
+        // XXX builds in a callback: move there?
         thread {
             Thread.sleep(1000)
             Rlog.d("PHH", "Trying to register ims LTE active")
