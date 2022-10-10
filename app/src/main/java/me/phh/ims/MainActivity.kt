@@ -454,9 +454,7 @@ class MainActivity : AppCompatActivity() {
 
             val outgoingTransform =
                 IpSecTransform.Builder(this)
-                    .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
-                    )
+                    .setAuthentication(IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96))
                     .also {
                         if (securityServerParams["ealg"] == "aes-cbc") {
                             it.setEncryption(
@@ -468,9 +466,7 @@ class MainActivity : AppCompatActivity() {
 
             val ingoingTransform =
                 IpSecTransform.Builder(this)
-                    .setAuthentication(
-                        IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96)
-                    )
+                    .setAuthentication(IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96))
                     .also {
                         if (securityServerParams["ealg"] == "aes-cbc") {
                             it.setEncryption(
