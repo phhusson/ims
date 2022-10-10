@@ -95,7 +95,7 @@ class SipHandler(val ctxt: Context) {
                     }
             )
         Rlog.d("PHH", "Replying back with $reply")
-        writer.write(reply.toByteArray())
+        synchronized(writer) { writer.write(reply.toByteArray()) }
 
         return true
     }
@@ -324,7 +324,7 @@ class SipHandler(val ctxt: Context) {
             """.toSipHeadersMap()
             ) // route present on all calls except this
         Rlog.d("PHH", "Sending $msg")
-        writer.write(msg.toByteArray())
+        synchronized(writer) { writer.write(msg.toByteArray()) }
         registerCounter += 1
     }
 
@@ -345,6 +345,6 @@ class SipHandler(val ctxt: Context) {
             """.toSipHeadersMap()
             )
         Rlog.d("PHH", "Sending $msg")
-        writer.write(msg.toByteArray())
+        synchronized(writer) { writer.write(msg.toByteArray()) }
     }
 }
