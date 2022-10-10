@@ -13,6 +13,7 @@ import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.SocketException
 import kotlin.concurrent.thread
 
 class SipHandler(val ctxt: Context) {
@@ -62,7 +63,18 @@ class SipHandler(val ctxt: Context) {
     lateinit var serverSocket: SipConnectionTcpServer
 
     fun parseMessage(reader: SipReader, writer: OutputStream): Boolean {
-        val msg = reader.parseMessage()
+        val msg =
+            try {
+                reader.parseMessage()
+            } catch (e: SocketException) {
+                val s = e.toString()
+                Rlog.d("PHH", "Got exception $e : $s")
+                if (s == "Try again") {
+                    // we sometimes seem to get EAGAIN
+                    return true
+                }
+                throw e
+            }
         Rlog.d("PHH", "Received message $msg")
         if (msg is SipResponse) {
             return handleResponse(msg, writer)
