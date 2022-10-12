@@ -15,8 +15,11 @@ import java.io.OutputStream
 import java.net.InetAddress
 import java.net.SocketException
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.thread
 import kotlin.concurrent.withLock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class SipHandler(val ctxt: Context) {
     val subscriptionManager: SubscriptionManager
@@ -246,9 +249,9 @@ class SipHandler(val ctxt: Context) {
         handleResponse(regReply)
 
         // we registered! Kick in thread to register every 3000s
-        thread {
+        CoroutineScope(Dispatchers.IO).launch {
             while (true) {
-                Thread.sleep(3_000_000)
+                delay(3_000_000)
                 register(socket.writer)
                 // don't try to read reply, main thread will
             }
@@ -259,12 +262,15 @@ class SipHandler(val ctxt: Context) {
         // - connection to server socket
         // start both in threads as we're only called here from network
         // callback from which it's better to return
-        thread {
+        CoroutineScope(Dispatchers.IO).launch {
+            // XXX catch and reconnect on 'java.net.SocketException: Software caused connection
+            // abort' ?
             while (parseMessage(socket.reader, socket.writer)) {}
             socket.close()
         }
-        thread {
+        CoroutineScope(Dispatchers.IO).launch {
             while (true) {
+                // XXX catch and reconnect on 'java.net.SocketException: Socket closed' ?
                 val client = serverSocket.serverSocket.accept()
                 // there can only be a single client at a time because
                 // both source and destination ports are fixed
