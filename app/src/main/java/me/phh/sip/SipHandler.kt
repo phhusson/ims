@@ -68,17 +68,27 @@ class SipHandler(val ctxt: Context) {
     lateinit var serverSocket: SipConnectionTcpServer
 
     var cbLock = ReentrantLock()
-    var requestCallbacks: Map<SipMethod, ((SipRequest) -> SipResponse?)> = mapOf()
+    var requestCallbacks: Map<SipMethod, ((SipRequest) -> Int)> = mapOf()
     var responseCallbacks: Map<String, ((SipResponse) -> Boolean)> = mapOf()
+    var imsReady = false
+    var imsReadyCallback: (() -> Unit)? = null
+    var imsFailureCallback: (() -> Unit)? = null
+    var onSmsReceived: ((Int, String, ByteArray) -> Unit)? = null
+
+    fun setRequestCallback(method: SipMethod, cb: (SipRequest) -> Int) {
+        cbLock.withLock { requestCallbacks += (method to cb) }
+    }
+    fun setResponseCallback(callId: String, cb: (SipResponse) -> Boolean) {
+        cbLock.withLock { responseCallbacks += (callId to cb) }
+    }
 
     fun parseMessage(reader: SipReader, writer: OutputStream): Boolean {
         val msg =
             try {
                 reader.parseMessage()
             } catch (e: SocketException) {
-                val s = e.toString()
-                Rlog.d("PHH", "Got exception $e : $s")
-                if (s == "Try again") {
+                Rlog.d("PHH", "Got exception $e")
+                if ("$e" == "java.net.SocketException: Try again") {
                     // we sometimes seem to get EAGAIN
                     return true
                 }
@@ -95,36 +105,32 @@ class SipHandler(val ctxt: Context) {
         }
 
         val requestCb = cbLock.withLock { requestCallbacks[msg.method] }
-        var reply: SipResponse? = null
+        var status = 200
         if (requestCb != null) {
-            reply = requestCb(msg)
+            status = requestCb(msg)
         }
-        if (reply == null) {
-            reply =
-                SipResponse(
-                    statusCode = 200,
-                    statusString = "OK",
-                    headersParam =
-                        msg.headers
-                            .filter { (k, _) ->
-                                k in listOf("cseq", "via", "from", "to", "call-id")
-                            }
-                            .mapKeys { (k, _) ->
-                                // reply has to and from swapped
-                                when (k) {
-                                    "to" -> {
-                                        "from"
-                                    }
-                                    "from" -> {
-                                        "to"
-                                    }
-                                    else -> {
-                                        k
-                                    }
+        val reply =
+            SipResponse(
+                statusCode = status,
+                statusString = "OK",
+                headersParam =
+                    msg.headers
+                        .filter { (k, _) -> k in listOf("cseq", "via", "from", "to", "call-id") }
+                        .mapKeys { (k, _) ->
+                            // reply has to and from swapped
+                            when (k) {
+                                "to" -> {
+                                    "from"
+                                }
+                                "from" -> {
+                                    "to"
+                                }
+                                else -> {
+                                    k
                                 }
                             }
-                )
-        }
+                        }
+            )
         Rlog.d("PHH", "Replying back with $reply")
         synchronized(writer) { writer.write(reply.toByteArray()) }
 
@@ -148,6 +154,11 @@ class SipHandler(val ctxt: Context) {
             cbLock.withLock { responseCallbacks -= callId }
         }
         return true
+    }
+
+    fun handleSms(request: SipRequest): Int {
+        onSmsReceived?.invoke(1234, "3gpp2", request.body)
+        return 200
     }
 
     fun connect() {
@@ -175,7 +186,7 @@ class SipHandler(val ctxt: Context) {
         plainSocket.close()
         if (plainRegReply !is SipResponse || plainRegReply.statusCode != 401) {
             Rlog.w("PHH", "Didn't get expected response from initial register, aborting")
-            // XXX signal failure to MmTelFeature for controlled retry
+            imsFailureCallback?.invoke()
             return
         }
 
@@ -236,16 +247,12 @@ class SipHandler(val ctxt: Context) {
 
         if (regReply !is SipResponse || regReply.statusCode != 200) {
             Rlog.w("PHH", "Could not connect, aborting SIP")
-            // XXX signal failure to MmTelFeature? just throwing an exception
-            // would restart the whole IMS stack, but we don't really want to
-            // do that without some throttling as trying to register in a tight
-            // loop could get us banned
+            imsFailureCallback?.invoke()
             return
         }
 
-        cbLock.withLock {
-            responseCallbacks += (registerHeaders["call-id"]!![0] to ::handleRegister)
-        }
+        setResponseCallback(registerHeaders["call-id"]!![0], ::registerCallback)
+        setRequestCallback(SipMethod.MESSAGE, ::handleSms)
         handleResponse(regReply)
 
         // we registered! Kick in thread to register every 3000s
@@ -346,7 +353,7 @@ class SipHandler(val ctxt: Context) {
         registerCounter += 1
     }
 
-    fun handleRegister(response: SipResponse): Boolean {
+    fun registerCallback(response: SipResponse): Boolean {
         // once we get there all register must be successful
         // on failure just abort thread, ims will restart
         require(response.statusCode == 200)
@@ -367,12 +374,12 @@ class SipHandler(val ctxt: Context) {
                 "to" to listOf("<sip:$mySip>"),
             )
 
-        subscribe(socket.writer, "sip:$mySip")
-        // keep callback
+        subscribe("sip:$mySip")
+        // always keep callback
         return false
     }
 
-    fun subscribe(writer: OutputStream, mySip: String) {
+    fun subscribe(mySip: String) {
         val msg =
             SipRequest(
                 SipMethod.SUBSCRIBE,
@@ -388,7 +395,52 @@ class SipHandler(val ctxt: Context) {
             Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
             """.toSipHeadersMap()
             )
+        if (!imsReady) {
+            setResponseCallback(msg.headers["call-id"]!![0], ::subscribeCallback)
+        }
         Rlog.d("PHH", "Sending $msg")
-        synchronized(writer) { writer.write(msg.toByteArray()) }
+        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+    }
+
+    fun subscribeCallback(response: SipResponse): Boolean {
+        if (response.statusCode != 200) {
+            imsFailureCallback?.invoke()
+            return true
+        }
+        imsReadyCallback?.invoke()
+        imsReady = true
+        return true
+    }
+
+    fun sendSms(pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
+        Rlog.d("PHH", "got sms to send, failing for now")
+        failCb()
+        /*
+        val msg =
+            SipRequest(
+                SipMethod.MESSAGE,
+                "XXX get destination",
+                commonHeaders +
+                    """
+            Event: reg
+            Expires: 600000
+            Supported: sec-agree
+            Require: sec-agree
+            Proxy-Require: sec-agree
+            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+            """.toSipHeadersMap(),
+                pdu
+            )
+        setresponseCallback(msg.headers["call-id"]!![0], { msg: SipResponse ->
+                if (msg.statusCode == 200) {
+                    successCb()
+                } else {
+                    failCb()
+                }
+                true
+            })
+        Rlog.d("PHH", "Sending $msg")
+        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        */
     }
 }

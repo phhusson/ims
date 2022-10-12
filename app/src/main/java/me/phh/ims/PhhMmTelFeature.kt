@@ -8,15 +8,15 @@ import android.telephony.ims.feature.ImsFeature
 import android.telephony.ims.feature.MmTelFeature
 import android.telephony.ims.stub.ImsCallSessionImplBase
 import android.telephony.ims.stub.ImsMultiEndpointImplBase
-import android.telephony.ims.stub.ImsRegistrationImplBase
+import android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_LTE
 import android.telephony.ims.stub.ImsSmsImplBase
 import android.telephony.ims.stub.ImsUtImplBase
-import kotlin.concurrent.thread
 import me.phh.sip.SipHandler
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
 class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
-    val mImsSms = PhhImsSms(slotId)
+    val imsSms = PhhImsSms(slotId)
+    lateinit var sipHandler: SipHandler
 
     override fun createCallProfile(callSessionType: Int, callType: Int): ImsCallProfile {
         Rlog.d("PHH", "MmTelFeature $slotId createCallProfile $callSessionType $callType")
@@ -60,7 +60,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
 
     override fun getSmsImplementation(): ImsSmsImplBase {
         Rlog.d("PHH", "MmTelFeature $slotId getSmsImplementation")
-        return mImsSms
+        return imsSms
     }
 
     override fun getUt(): ImsUtImplBase {
@@ -68,7 +68,6 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
         return ImsUtImplBase()
     }
 
-    lateinit var sipHandler: SipHandler
     override fun onFeatureReady() {
         Rlog.d("PHH", "MmTelFeature $slotId onFeatureReady")
 
@@ -76,14 +75,14 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
         // register SIP here and call onRegistered after .. register.
         val imsService = PhhImsService.Companion.instance!!
         sipHandler = SipHandler(imsService)
-        sipHandler.getVolteNetwork()
-        // XXX builds in a callback: move there?
-        thread {
-            Thread.sleep(1000)
-            Rlog.d("PHH", "Trying to register ims LTE active")
-            PhhImsService.Companion.instance!!.getRegistration(slotId)
-                .onRegistered(ImsRegistrationImplBase.REGISTRATION_TECH_LTE)
+        sipHandler.imsFailureCallback = { imsService.getRegistration(slotId).onDeregistered(null) }
+        sipHandler.imsReadyCallback = {
+            imsService.getRegistration(slotId).onRegistered(REGISTRATION_TECH_LTE)
         }
+        imsSms.sipHandler = sipHandler
+        sipHandler.onSmsReceived = imsSms::onSmsReceived
+        imsService.getRegistration(slotId).onRegistering(REGISTRATION_TECH_LTE)
+        sipHandler.getVolteNetwork()
 
         /*
          This works!
