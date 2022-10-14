@@ -25,6 +25,10 @@ class SipConnectionTcp(
     var remotePort: Int = 0
     lateinit var writer: OutputStream
     lateinit var reader: SipReader
+    // we need to keep the transform around or the ipsec transform
+    // gets destroyed while still in use
+    lateinit var inTransform: IpSecTransform
+    lateinit var outTransform: IpSecTransform
     var connected = false
 
     init {
@@ -61,9 +65,9 @@ class SipConnectionTcp(
     ) {
         // Can only do this before connecting?
         check(!connected)
-        val inTransform = ipSecBuilder.buildTransportModeTransform(remoteAddr, clientSpiC)
+        inTransform = ipSecBuilder.buildTransportModeTransform(remoteAddr, clientSpiC)
         ipSecManager.applyTransportModeTransform(socket, IpSecManager.DIRECTION_IN, inTransform)
-        val outTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiS)
+        outTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiS)
         ipSecManager.applyTransportModeTransform(socket, IpSecManager.DIRECTION_OUT, outTransform)
     }
 }
@@ -76,6 +80,8 @@ class SipConnectionTcpServer(
 ) {
     val serverSocket: ServerSocket
     val serverSocketFd: FileDescriptor
+    lateinit var inTransform: IpSecTransform
+    lateinit var outTransform: IpSecTransform
 
     init {
         serverSocket = ServerSocket()
@@ -97,13 +103,13 @@ class SipConnectionTcpServer(
         clientSpiS: IpSecManager.SecurityParameterIndex,
         serverSpiC: IpSecManager.SecurityParameterIndex
     ) {
-        val inTransform = ipSecBuilder.buildTransportModeTransform(remoteAddr, clientSpiS)
+        inTransform = ipSecBuilder.buildTransportModeTransform(remoteAddr, clientSpiS)
         ipSecManager.applyTransportModeTransform(
             serverSocketFd,
             IpSecManager.DIRECTION_IN,
             inTransform
         )
-        val outTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
+        outTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
         ipSecManager.applyTransportModeTransform(
             serverSocketFd,
             IpSecManager.DIRECTION_OUT,

@@ -60,6 +60,8 @@ class SipHandler(val ctxt: Context) {
 
     lateinit var clientSpiC: IpSecManager.SecurityParameterIndex
     lateinit var clientSpiS: IpSecManager.SecurityParameterIndex
+    lateinit var serverSpiC: IpSecManager.SecurityParameterIndex
+    lateinit var serverSpiS: IpSecManager.SecurityParameterIndex
 
     lateinit var network: Network
 
@@ -219,11 +221,11 @@ class SipHandler(val ctxt: Context) {
         val portS = securityServerParams["port-s"]!!.toInt()
         // spi string is 32 bit unsigned, but ipSecManager wants an int...
         val spiS = securityServerParams["spi-s"]!!.toUInt().toInt()
-        val serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
+        serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
 
         // val portC = securityServerParams["port-c"]!!.toInt()
         val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
-        val serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
+        serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
 
         val ealg = securityServerParams["ealg"]
         // SHA1-96 mac key must be 160 bits, pad ik
