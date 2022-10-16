@@ -20,6 +20,7 @@ typealias SipHeader = String
 
 typealias SipHeadersMap = Map<String, List<SipHeader>>
 
+@OptIn(ExperimentalStdlibApi::class)
 abstract class SipMessage() {
     abstract val firstLine: String
     abstract val headers: SipHeadersMap
@@ -193,6 +194,7 @@ data class SipResponse(
 private val splitHeader = "^\\s*([^:]+)\\s*:\\s*(.+)$".toRegex()
 private val splitComma = "(<[^>]*>|[^,]+?)+".toRegex()
 
+@OptIn(ExperimentalStdlibApi::class)
 fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
     val (headerRaw, valueRaw) = splitHeader.find(line)?.destructured ?: return null
     val header =
@@ -226,6 +228,7 @@ fun sipHeaderOf(line: String): Pair<String, List<SipHeader>>? {
     return header to values
 }
 
+@OptIn(ExperimentalStdlibApi::class)
 private fun splitParams(
     value: String,
     splitRegex: Regex,

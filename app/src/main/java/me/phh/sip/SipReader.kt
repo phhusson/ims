@@ -12,6 +12,7 @@ import java.io.InputStream
 
 fun InputStream.sipReader(): SipReader = SipReader(this)
 
+@OptIn(ExperimentalStdlibApi::class)
 class SipReader(private val input: InputStream) : BufferedInputStream(input) {
     //  internal buffer size is not exposed but default is 2k so
     //  just pick something smaller
