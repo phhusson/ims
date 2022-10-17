@@ -11,3 +11,11 @@ android_app {
       "kotlinx-coroutines-android",
     ],
 }
+
+runtime_resource_overlay {
+  name: "PhhImsOverlay",
+  resource_dirs: ["overlay/res"],
+  manifest: "overlay/AndroidManifest.xml",
+  certificate: "platform",
+  product_specific: true,
+}
