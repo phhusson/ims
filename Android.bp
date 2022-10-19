@@ -10,6 +10,7 @@ android_app {
       "com.google.android.material_material",
       "kotlinx-coroutines-android",
     ],
+    required: ["PhhImsOverlay"],
 }
 
 runtime_resource_overlay {

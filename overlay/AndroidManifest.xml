@@ -3,6 +3,7 @@
 	android:versionCode="1"
 	android:versionName="1.0">
 	<overlay android:targetPackage="com.android.phone"
-		android:priority="0"
+		android:isStatic="true"
+		android:priority="100"
 		/>
 </manifest>
