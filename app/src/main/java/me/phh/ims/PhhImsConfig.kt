@@ -21,13 +21,11 @@ class PhhImsConfig() : ImsConfigImplBase() {
     }
     override fun getConfigInt(item: Int): Int {
         Rlog.d("PHH", "PhhImsConfig getConfigInt $item")
-        // XXX throw RemoteException
-        return intMap.get(item)!!
+        return intMap.get(item) ?: ImsConfigImplBase.CONFIG_RESULT_UNKNOWN
     }
-    override fun getConfigString(item: Int): String {
+    override fun getConfigString(item: Int): String? {
         Rlog.d("PHH", "PhhImsConfig getConfigString $item")
-        // XXX throw RemoteException
-        return strMap.get(item)!!
+        return strMap.get(item)
     }
     override fun updateImsCarrierConfigs(bundle: PersistableBundle) {
         Rlog.d("PHH", "PhhImsConfig updateImsCarrierConfigs")
