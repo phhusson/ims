@@ -9,12 +9,12 @@ class PhhImsConfig() : ImsConfigImplBase() {
     val intMap = HashMap<Int, Int>()
     val strMap = HashMap<Int, String>()
 
-    override fun setConfig(item: Int, value: Int): /*SetConfigResult*/ Int {
+    override @SetConfigResult fun setConfig(item: Int, value: Int): Int {
         Rlog.d("PHH", "PhhImsConfig setConfig $item $value")
         intMap.put(item, value)
         return ImsConfigImplBase.CONFIG_RESULT_SUCCESS
     }
-    override fun setConfig(item: Int, value: String): /*SetConfigResult*/ Int {
+    override @SetConfigResult fun setConfig(item: Int, value: String): Int {
         Rlog.d("PHH", "PhhImsConfig setConfig $item $value")
         strMap.put(item, value)
         return ImsConfigImplBase.CONFIG_RESULT_SUCCESS
