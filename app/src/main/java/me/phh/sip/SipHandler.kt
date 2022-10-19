@@ -22,6 +22,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class SipHandler(val ctxt: Context) {
+    companion object {
+        val TAG = "PHH SipHandler"
+    }
+
     val subscriptionManager: SubscriptionManager
     val telephonyManager: TelephonyManager
     val connectivityManager: ConnectivityManager
@@ -89,20 +93,20 @@ class SipHandler(val ctxt: Context) {
             try {
                 reader.parseMessage()
             } catch (e: SocketException) {
-                Rlog.d("PHH", "Got exception $e")
+                Rlog.d(TAG, "Got exception $e")
                 if ("$e" == "java.net.SocketException: Try again") {
                     // we sometimes seem to get EAGAIN
                     return true
                 }
                 throw e
             }
-        Rlog.d("PHH", "Received message $msg")
+        Rlog.d(TAG, "Received message $msg")
         if (msg is SipResponse) {
             return handleResponse(msg)
         }
         if (msg !is SipRequest) {
             // invalid message,stop tryng
-            Rlog.d("PHH", "Got invalid message, closing socket!")
+            Rlog.d(TAG, "Got invalid message, closing socket!")
             return false
         }
 
@@ -133,7 +137,7 @@ class SipHandler(val ctxt: Context) {
                             }
                         }
             )
-        Rlog.d("PHH", "Replying back with $reply")
+        Rlog.d(TAG, "Replying back with $reply")
         synchronized(writer) { writer.write(reply.toByteArray()) }
 
         return true
@@ -164,7 +168,7 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun connect() {
-        Rlog.d("PHH", "SipHandler connect")
+        Rlog.d(TAG, "connect")
         val lp = connectivityManager.getLinkProperties(network)
         val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
         val pcscf = pcscfs[0]
@@ -184,10 +188,10 @@ class SipHandler(val ctxt: Context) {
         updateCommonHeaders(plainSocket)
         register(plainSocket.writer)
         val plainRegReply = plainSocket.reader.parseMessage()
-        Rlog.d("PHH", "Received $plainRegReply")
+        Rlog.d(TAG, "Received $plainRegReply")
         plainSocket.close()
         if (plainRegReply !is SipResponse || plainRegReply.statusCode != 401) {
-            Rlog.w("PHH", "Didn't get expected response from initial register, aborting")
+            Rlog.w(TAG, "Didn't get expected response from initial register, aborting")
             imsFailureCallback?.invoke()
             return
         }
@@ -197,7 +201,7 @@ class SipHandler(val ctxt: Context) {
         require(wwwAuthenticateType == "Digest")
         val nonceB64 = wwwAuthenticateParams["nonce"]!!
 
-        Rlog.d("PHH", "Requesting AKA challenge")
+        Rlog.d(TAG, "Requesting AKA challenge")
         val akaResult = sipAkaChallenge(telephonyManager, nonceB64)
         akaDigest =
             SipAkaDigest(
@@ -245,10 +249,10 @@ class SipHandler(val ctxt: Context) {
         updateCommonHeaders(socket)
         register(socket.writer)
         val regReply = socket.reader.parseMessage()!!
-        Rlog.d("PHH", "Received $regReply")
+        Rlog.d(TAG, "Received $regReply")
 
         if (regReply !is SipResponse || regReply.statusCode != 200) {
-            Rlog.w("PHH", "Could not connect, aborting SIP")
+            Rlog.w(TAG, "Could not connect, aborting SIP")
             imsFailureCallback?.invoke()
             return
         }
@@ -293,7 +297,7 @@ class SipHandler(val ctxt: Context) {
 
     fun getVolteNetwork() {
         // TODO add something similar for VoWifi ipsec tunnel?
-        Rlog.d("PHH", "Requesting IMS network")
+        Rlog.d(TAG, "Requesting IMS network")
         connectivityManager.registerNetworkCallback(
             NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
@@ -302,7 +306,7 @@ class SipHandler(val ctxt: Context) {
                 .build(),
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(_network: Network) {
-                    Rlog.d("PHH", "Got IMS network.")
+                    Rlog.d(TAG, "Got IMS network.")
                     network = _network
                     connect()
                 }
@@ -350,7 +354,7 @@ class SipHandler(val ctxt: Context) {
                  $secClientLine
             """.toSipHeadersMap()
             ) // route present on all calls except this
-        Rlog.d("PHH", "Sending $msg")
+        Rlog.d(TAG, "Sending $msg")
         synchronized(writer) { writer.write(msg.toByteArray()) }
         registerCounter += 1
     }
@@ -400,7 +404,7 @@ class SipHandler(val ctxt: Context) {
         if (!imsReady) {
             setResponseCallback(msg.headers["call-id"]!![0], ::subscribeCallback)
         }
-        Rlog.d("PHH", "Sending $msg")
+        Rlog.d(TAG, "Sending $msg")
         synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
     }
 
@@ -415,7 +419,7 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun sendSms(pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
-        Rlog.d("PHH", "got sms to send, failing for now")
+        Rlog.d(TAG, "got sms to send, failing for now")
         failCb()
         /*
         val msg =
@@ -441,7 +445,7 @@ class SipHandler(val ctxt: Context) {
                 }
                 true
             })
-        Rlog.d("PHH", "Sending $msg")
+        Rlog.d(TAG, "Sending $msg")
         synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
         */
     }

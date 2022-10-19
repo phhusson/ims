@@ -8,6 +8,10 @@ import me.phh.sip.SipHandler
 // handle sms from device to ims
 // frameworks/base/telephony/java/android/telephony/ims/stub/ImsSmsImplBase.java
 class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
+    companion object {
+        val TAG = "Phh ImsSms"
+    }
+
     lateinit var sipHandler: SipHandler
 
     // phone -> outside API
@@ -21,7 +25,7 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
     ) {
         val content = String(pdu)
         // called when android tries to send a sms?
-        Rlog.d("PHH", "ImsSms $slotId sendSms $token, $messageRef, $format, $smsc, $content")
+        Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc, $content")
         if (::sipHandler.isInitialized == false) {
             onSendSmsResultError(
                 token,
@@ -52,15 +56,15 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
     }
     override fun acknowledgeSms(token: Int, messageRef: Int, result: Int) {
         // called when android acks a received sms?
-        Rlog.d("PHH", "ImsSms $slotId acknowledgeSms $token, $messageRef, $result")
+        Rlog.d(TAG, "$slotId acknowledgeSms $token, $messageRef, $result")
     }
     override fun acknowledgeSmsReport(token: Int, messageRef: Int, result: Int) {
         // called when android acks onSmsStatusReportReceived?
-        Rlog.d("PHH", "ImsSms $slotId acknowledgeSmsReport $token, $messageRef, $result")
+        Rlog.d(TAG, "$slotId acknowledgeSmsReport $token, $messageRef, $result")
     }
     override fun onReady() {
         // should not do anything before this is called
-        Rlog.d("PHH", "ImsSms $slotId onReady")
+        Rlog.d(TAG, "$slotId onReady")
     }
     // outside -> phone API
     // on message received from ims call onSmsReceived(token, format, pdu)

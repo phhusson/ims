@@ -1,5 +1,6 @@
 package me.phh.sip
 
+import android.telephony.Rlog
 import java.io.BufferedInputStream
 import java.io.InputStream
 
@@ -14,6 +15,10 @@ fun InputStream.sipReader(): SipReader = SipReader(this)
 
 @OptIn(ExperimentalStdlibApi::class)
 class SipReader(private val input: InputStream) : BufferedInputStream(input) {
+    companion object {
+        val TAG = "PHH SipReader"
+    }
+
     //  internal buffer size is not exposed but default is 2k so
     //  just pick something smaller
     var markLength = 1024
@@ -55,6 +60,7 @@ class SipReader(private val input: InputStream) : BufferedInputStream(input) {
         while (true) {
             when (read()) {
                 -1 -> {
+                    Rlog.d(TAG, "Got end of file/buffer")
                     // we could try to return whatever we read until this point,
                     // but that really means we got an invalid message (end of input too early)
                     // so just return null

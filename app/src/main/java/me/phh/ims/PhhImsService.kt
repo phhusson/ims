@@ -12,20 +12,29 @@ import android.telephony.ims.stub.ImsConfigImplBase
 import android.telephony.ims.stub.ImsRegistrationImplBase
 
 class PhhImsBroadcastReceiver : BroadcastReceiver() {
+    companion object {
+        val TAG = "Phh ImsBroadcastReceiver"
+    }
+
     override fun onReceive(ctxt: Context, intent: Intent) {
-        Rlog.d("PHH", "PhhImsBroadcastReceiver onReceive")
+        Rlog.d(TAG, "onReceive")
     }
 }
 
 class PhhImsService : ImsService() {
+    companion object {
+        val TAG = "PHH ImsService"
+        var instance: PhhImsService? = null
+    }
+
     override fun onCreate() {
-        Rlog.d("PHH", "ImsService onCreate")
+        Rlog.d(TAG, "onCreate")
     }
 
     // XXX one per slot id...
     var mmTelFeature: PhhMmTelFeature? = null
     override fun createMmTelFeature(slotId: Int): MmTelFeature {
-        Rlog.d("PHH", "ImsService createMmTelFeature")
+        Rlog.d(TAG, "createMmTelFeature")
         var feature = mmTelFeature
         if (feature == null) {
             feature = PhhMmTelFeature(slotId)
@@ -34,14 +43,14 @@ class PhhImsService : ImsService() {
         return feature
     }
     override fun createRcsFeature(slotId: Int): RcsFeature? {
-        Rlog.d("PHH", "ImsService createRcsFeature")
+        Rlog.d(TAG, "createRcsFeature")
         return null
     }
 
     val config = PhhImsConfig()
 
     override fun getConfig(slotId: Int): ImsConfigImplBase {
-        Rlog.d("PHH", "ImsService getConfig")
+        Rlog.d(TAG, "getConfig")
         return config
     }
 
@@ -49,7 +58,7 @@ class PhhImsService : ImsService() {
 
     class LocalBinder : Binder() {
         fun getService(): PhhImsService {
-            Rlog.d("PHH", "ImsService LocalBinder getService")
+            Rlog.d(TAG, "LocalBinder getService")
             return PhhImsService()
         }
     }
@@ -57,25 +66,20 @@ class PhhImsService : ImsService() {
     // XXX cache one per slot id
     val imsRegistration = ImsRegistrationImplBase()
     override fun getRegistration(slotId: Int): ImsRegistrationImplBase {
-        Rlog.d("PHH", "ImsService getRegistration $slotId")
+        Rlog.d(TAG, "getRegistration $slotId")
         return imsRegistration
     }
 
     override fun onDestroy() {
-        Rlog.d("PHH", "ImsService onDestroy")
+        Rlog.d(TAG, "onDestroy")
         instance = null
     }
 
     override fun readyForFeatureCreation() {
-        Rlog.d("PHH", "ImsService readyForFeatureCreation")
+        Rlog.d(TAG, "readyForFeatureCreation")
         if (instance != null && instance !== this) {
             throw RuntimeException()
         }
         instance = this
-    }
-
-    companion object {
-        var instance: PhhImsService? = null
-        // const val tag = "PhhImsService"
     }
 }

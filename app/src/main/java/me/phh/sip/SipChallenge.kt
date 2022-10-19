@@ -1,10 +1,12 @@
 package me.phh.sip
 
+import android.telephony.Rlog
 import android.telephony.TelephonyManager
 import android.util.Base64
-import android.util.Log
 
 data class SipAkaResult(val res: ByteArray, val ck: ByteArray, val ik: ByteArray)
+
+private const val TAG = "PHH SipChallenge"
 
 fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
     val nonce = Base64.decode(nonceB64, Base64.DEFAULT)
@@ -17,7 +19,7 @@ fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
     val challengeArray = challengeBytes.toByteArray()
 
     val challenge = Base64.encodeToString(challengeArray, Base64.NO_WRAP)
-    Log.d("PHH", "Challenge B64 is $challenge")
+    Rlog.d(TAG, "Challenge B64 is $challenge")
 
     val responseB64 =
         tm.getIccAuthentication(
@@ -27,7 +29,7 @@ fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
         )
     val response = Base64.decode(responseB64, Base64.DEFAULT)
     if (response[0] != (0xdb).toByte()) {
-        Log.d("PHH", "AKA challenge from SIP failed")
+        Rlog.d(TAG, "AKA challenge from SIP failed")
         throw Exception("AKA Challenge from SIP failed")
     }
 
@@ -37,18 +39,18 @@ fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
     responseStream.nextByte()
 
     val resLen = responseStream.nextByte().toInt()
-    Log.d("PHH", "resLen $resLen")
+    Rlog.d(TAG, "resLen $resLen")
     val res = (0 until resLen).map { responseStream.nextByte() }.toList()
 
     val ckLen = responseStream.nextByte().toInt()
-    Log.d("PHH", "ckLen $ckLen")
+    Rlog.d(TAG, "ckLen $ckLen")
     val ck = (0 until ckLen).map { responseStream.nextByte() }.toList()
 
     val ikLen = responseStream.nextByte().toInt()
-    Log.d("PHH", "ikLen $ikLen")
+    Rlog.d(TAG, "ikLen $ikLen")
     val ik = (0 until ikLen).map { responseStream.nextByte() }.toList()
 
-    Log.d("PHH", "Got res $res ck $ck ik $ik")
+    Rlog.d(TAG, "Got res $res ck $ck ik $ik")
 
     return SipAkaResult(res = res.toByteArray(), ck = ck.toByteArray(), ik = ik.toByteArray())
 }
@@ -68,7 +70,7 @@ data class SipAkaDigest(
     var digest: String = ""
 
     init {
-        Log.d("PHH", "H1 = $H1, H2 = REGISTER:$uri = $H2")
+        Rlog.d(TAG, "H1 = $H1, H2 = REGISTER:$uri = $H2")
         increment()
     }
 
@@ -76,7 +78,7 @@ data class SipAkaDigest(
         nonceCount = "%08d".format(nonceCount.toInt() + 1)
         cnonce = randomBytes(8).toHex() // 16 bytes on some traces
         digest = "$H1:$nonceB64:$nonceCount:$cnonce:auth:$H2".toMD5()
-        Log.d("PHH", "chall $H1:$nonceB64:$nonceCount:$cnonce:auth:$H2 $digest")
+        Rlog.d(TAG, "chall $H1:$nonceB64:$nonceCount:$cnonce:auth:$H2 $digest")
     }
 
     override fun toString(): String =
