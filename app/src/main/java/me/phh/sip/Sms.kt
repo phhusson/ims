@@ -106,8 +106,19 @@ fun ByteArray.SipSmsDecode(): SipSms? {
 }
 
 fun SipSmsEncodeSms(ref: Byte, smsc: String?, pdu: ByteArray): ByteArray {
-    val pduLen = pdu.size
-    val bufArray = ByteArray(pduLen + 20 /* XXX... precompute smsc size?... */)
+    /* get smsc BCD representation first to compute encoded length */
+    val smscBcd =
+        if (smsc == null) {
+            ByteArray(0)
+        } else {
+            PhoneNumberUtils.numberToCalledPartyBCD(
+                smsc,
+                PhoneNumberUtils.BCD_EXTENDED_TYPE_CALLED_PARTY
+            )
+        }
+    /* constant overhead: rp type, ref, orig/dest/buf lengths */
+    val bufLen = 5 + smscBcd.size + pdu.size
+    val bufArray = ByteArray(bufLen)
     val buf = ByteBuffer.wrap(bufArray).order(ByteOrder.BIG_ENDIAN)
 
     buf.put(SmsType.RP_DATA_TO_NETWORK.value)
@@ -116,17 +127,13 @@ fun SipSmsEncodeSms(ref: Byte, smsc: String?, pdu: ByteArray): ByteArray {
     // orig addr, can apparently keep it empty?
     buf.put(0)
 
-    // dest addr, apparently use smsc?
-    if (smsc == null) {
-        buf.put(0)
-    } else {
-        // XXX numberToCalledPartyBCD ?
-        buf.put(0)
-    }
+    // dest addr, apparently smsc
+    buf.put(smscBcd.size.toByte())
+    buf.put(smscBcd)
 
     // original pdu
-    buf.put(pduLen.toByte())
-    buf.put(pdu, 0, pduLen)
+    buf.put(pdu.size.toByte())
+    buf.put(pdu)
     return bufArray
 }
 

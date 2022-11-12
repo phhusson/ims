@@ -9,6 +9,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.telephony.Rlog
+import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import java.io.OutputStream
@@ -62,8 +63,10 @@ class SipHandler(val ctxt: Context) {
         From: <sip:$user>
         To: <sip:$user>
         Call-ID: ${randomBytes(12).toHex()}
-    """.toSipHeadersMap()
+        """.toSipHeadersMap()
     private var commonHeaders = "".toSipHeadersMap()
+    private var contact = ""
+    private var mySip = ""
 
     // too many lateinit, bad separation?
     lateinit private var localAddr: InetAddress
@@ -311,11 +314,12 @@ class SipHandler(val ctxt: Context) {
     fun updateCommonHeaders(socket: SipConnectionTcp) {
         val local = "[${socket.localAddr.hostAddress}]:${socket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+        contact =
+            """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val newHeaders =
             """
-                 Via: SIP/2.0/TCP $local;rport
-                 Contact: <sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio
-                 """.toSipHeadersMap()
+            Via: SIP/2.0/TCP $local;rport
+            """.toSipHeadersMap()
         registerHeaders += newHeaders
         commonHeaders += newHeaders
     }
@@ -338,15 +342,16 @@ class SipHandler(val ctxt: Context) {
                 "sip:$realm",
                 registerHeaders +
                     """
-                 Expires: 600000
-                 Cseq: $registerCounter REGISTER
-                 Supported: path, gruu, sec-agree
-                 Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-                 Authorization: $akaDigest
-                 Require: sec-agree
-                 Proxy-Require: sec-agree
-                 $secClientLine
-            """.toSipHeadersMap()
+                    Expires: 600000
+                    Cseq: $registerCounter REGISTER
+                    Contact: $contact
+                    Supported: path, gruu, sec-agree
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    Authorization: $akaDigest
+                    Require: sec-agree
+                    Proxy-Require: sec-agree
+                    $secClientLine
+                    """.toSipHeadersMap()
             ) // route present on all calls except this
         Rlog.d(TAG, "Sending $msg")
         synchronized(writer) { writer.write(msg.toByteArray()) }
@@ -366,34 +371,35 @@ class SipHandler(val ctxt: Context) {
 
         val associatedUri =
             response.headers["p-associated-uri"]!!.map { it.trimStart('<').trimEnd('>').split(':') }
-        val mySip = associatedUri.first { it[0] == "sip" }[1]
+        mySip = "sip:" + associatedUri.first { it[0] == "sip" }[1]
         commonHeaders +=
             mapOf(
                 "route" to route,
-                "from" to listOf("<sip:$mySip>"),
-                "to" to listOf("<sip:$mySip>"),
+                "from" to listOf("<$mySip>"),
+                "to" to listOf("<$mySip>"),
             )
 
-        subscribe("sip:$mySip")
+        subscribe()
         // always keep callback
         return false
     }
 
-    fun subscribe(mySip: String) {
+    fun subscribe() {
         val msg =
             SipRequest(
                 SipMethod.SUBSCRIBE,
                 "$mySip",
                 commonHeaders +
                     """
-            P-Preferred-Identity: <$mySip>
-            Event: reg
-            Expires: 600000
-            Supported: sec-agree
-            Require: sec-agree
-            Proxy-Require: sec-agree
-            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-            """.toSipHeadersMap()
+                    Contact: $contact
+                    P-Preferred-Identity: <$mySip>
+                    Event: reg
+                    Expires: 600000
+                    Supported: sec-agree
+                    Require: sec-agree
+                    Proxy-Require: sec-agree
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    """.toSipHeadersMap()
             )
         if (!imsReady) {
             setResponseCallback(msg.headers["call-id"]!![0], ::subscribeCallback)
@@ -447,36 +453,65 @@ class SipHandler(val ctxt: Context) {
         return 200
     }
 
-    fun sendSms(smsc: String?, pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
-        Rlog.d(TAG, "got sms to send, failing for now")
-        failCb()
-        /*
+    fun sendSms(smsSmsc: String?, pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
+        // make ref up?
+        val smsc =
+            if (smsSmsc != null) smsSmsc
+            else {
+                val smsManager =
+                    ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
+                val smscStr = smsManager.smscAddress
+                val smscMatchRegex = Regex("([0-9]+)")
+                smscMatchRegex.find(smscStr!!)!!.groupValues[1]
+            }
+        val data = SipSmsEncodeSms(0, smsc, pdu)
+        Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
+        /* XXX test
+        val t = SmsMessage.getSubmitPdu(smsc, "xxxxxxxxxxx", "hello", false)
+        val tpdu = t.encodedMessage
+        val headerSize = 3
+        val scSize = t.encodedScAddress?.size ?: 0
+        val v = ByteArray(tpdu.size + headerSize + scSize + 1)
+        v[0] = 0
+        v[1] = 0
+        v[2] = 0
+        if (t.encodedScAddress != null) System.arraycopy(t.encodedScAddress, 0, v, 3, scSize)
+        v[3 + scSize] = tpdu.size.toByte()
+        System.arraycopy(tpdu, 0, v, 3 + scSize + 1, tpdu.size)
+        Rlog.d(TAG, "phh would have sent ${v.toHex()}")
+        */
         val msg =
             SipRequest(
                 SipMethod.MESSAGE,
-                "XXX get destination",
+                "sip:+$smsc@$realm",
                 commonHeaders +
                     """
-                    Event: reg
+                    From: <$mySip>
+                    To: <sip:+$smsc@$realm>
+                    P-Preferred-Identity: <$mySip>
+                    P-Asserted-Identity: <$mySip>
                     Expires: 600000
+                    Content-Type: application/vnd.3gpp.sms
                     Supported: sec-agree
                     Require: sec-agree
                     Proxy-Require: sec-agree
                     Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
                     """.toSipHeadersMap(),
-                pdu
+                data
             )
-        setResponseCallback(msg.headers["call-id"]!![0], { msg: SipResponse ->
+        setResponseCallback(
+            msg.headers["call-id"]!![0],
+            { msg: SipResponse ->
                 if (msg.statusCode == 200) {
                     successCb()
                 } else {
                     failCb()
                 }
                 true
-            })
+            }
+        )
         Rlog.d(TAG, "Sending $msg")
         synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
-        */
     }
 
     fun sendSmsAck(token: Int, ref: Int, error: Boolean): Unit {

@@ -25,7 +25,20 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
     ) {
         val content = String(pdu)
         // called when android tries to send a sms?
-        Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc, $content")
+        Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc")
+        if (format != "3gpp") {
+            // we only know how to send 3gpp formatted sms.
+            // Android should do that correctly, error if not that will
+            // properly display 'message not sent' in messaging app
+            onSendSmsResultError(
+                token,
+                messageRef,
+                ImsSmsImplBase.SEND_STATUS_ERROR,
+                SmsManager.RESULT_INVALID_SMS_FORMAT,
+                RESULT_NO_NETWORK_ERROR
+            )
+            return
+        }
         if (::sipHandler.isInitialized == false) {
             onSendSmsResultError(
                 token,
@@ -48,7 +61,7 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
                 onSendSmsResultError(
                     token,
                     messageRef,
-                    ImsSmsImplBase.SEND_STATUS_ERROR_RETRY,
+                    ImsSmsImplBase.SEND_STATUS_ERROR,
                     SmsManager.RESULT_ERROR_GENERIC_FAILURE,
                     RESULT_NO_NETWORK_ERROR
                 )
