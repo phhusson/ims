@@ -37,6 +37,7 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
             return
         }
         sipHandler.sendSms(
+            smsc,
             pdu,
             {
                 // success cb
@@ -55,8 +56,12 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
         )
     }
     override fun acknowledgeSms(token: Int, messageRef: Int, result: Int) {
-        // called when android acks a received sms?
+        // called when android acks a received sms
         Rlog.d(TAG, "$slotId acknowledgeSms $token, $messageRef, $result")
+
+        // open notification on error?
+        val error = result != ImsSmsImplBase.DELIVER_STATUS_OK
+        sipHandler.sendSmsAck(token, messageRef, error)
     }
     override fun acknowledgeSmsReport(token: Int, messageRef: Int, result: Int) {
         // called when android acks onSmsStatusReportReceived?

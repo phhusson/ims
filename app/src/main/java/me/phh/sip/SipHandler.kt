@@ -21,15 +21,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private data class smsHeaders(
+    val dest: String,
+    val callId: String,
+    val cseq: String,
+)
+
 class SipHandler(val ctxt: Context) {
     companion object {
         val TAG = "PHH SipHandler"
     }
 
-    val subscriptionManager: SubscriptionManager
-    val telephonyManager: TelephonyManager
-    val connectivityManager: ConnectivityManager
-    val ipSecManager: IpSecManager
+    private val subscriptionManager: SubscriptionManager
+    private val telephonyManager: TelephonyManager
+    private val connectivityManager: ConnectivityManager
+    private val ipSecManager: IpSecManager
     init {
         subscriptionManager = ctxt.getSystemService(SubscriptionManager::class.java)
         telephonyManager = ctxt.getSystemService(TelephonyManager::class.java)
@@ -37,49 +43,54 @@ class SipHandler(val ctxt: Context) {
         ipSecManager = ctxt.getSystemService(IpSecManager::class.java)
     }
 
-    val activeSubscription = subscriptionManager.activeSubscriptionInfoList[0]
-    val imei = telephonyManager.getDeviceId(activeSubscription.simSlotIndex)
-    val subId = activeSubscription.subscriptionId
-    val mcc = telephonyManager.simOperator.substring(0 until 3)
-    var mnc = telephonyManager.simOperator.substring(3).let { if (it.length == 2) "0$it" else it }
-    val imsi = telephonyManager.subscriberId
+    private val activeSubscription = subscriptionManager.activeSubscriptionInfoList[0]
+    private val imei = telephonyManager.getDeviceId(activeSubscription.simSlotIndex)
+    private val subId = activeSubscription.subscriptionId
+    private val mcc = telephonyManager.simOperator.substring(0 until 3)
+    private var mnc =
+        telephonyManager.simOperator.substring(3).let { if (it.length == 2) "0$it" else it }
+    private val imsi = telephonyManager.subscriberId
 
-    val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
-    val user = "$imsi@$realm"
-    var akaDigest =
+    private val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
+    private val user = "$imsi@$realm"
+    private var akaDigest =
         """Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5"""
 
-    var registerCounter = 1
-    var registerHeaders =
+    private var registerCounter = 1
+    private var registerHeaders =
         """
         From: <sip:$user>
         To: <sip:$user>
         Call-ID: ${randomBytes(12).toHex()}
     """.toSipHeadersMap()
-    var commonHeaders = "".toSipHeadersMap()
+    private var commonHeaders = "".toSipHeadersMap()
 
     // too many lateinit, bad separation?
-    lateinit var localAddr: InetAddress
-    lateinit var pcscfAddr: InetAddress
+    lateinit private var localAddr: InetAddress
+    lateinit private var pcscfAddr: InetAddress
 
-    lateinit var clientSpiC: IpSecManager.SecurityParameterIndex
-    lateinit var clientSpiS: IpSecManager.SecurityParameterIndex
-    lateinit var serverSpiC: IpSecManager.SecurityParameterIndex
-    lateinit var serverSpiS: IpSecManager.SecurityParameterIndex
+    lateinit private var clientSpiC: IpSecManager.SecurityParameterIndex
+    lateinit private var clientSpiS: IpSecManager.SecurityParameterIndex
+    lateinit private var serverSpiC: IpSecManager.SecurityParameterIndex
+    lateinit private var serverSpiS: IpSecManager.SecurityParameterIndex
 
-    lateinit var network: Network
+    lateinit private var network: Network
 
-    lateinit var plainSocket: SipConnectionTcp
-    lateinit var socket: SipConnectionTcp
-    lateinit var serverSocket: SipConnectionTcpServer
+    lateinit private var plainSocket: SipConnectionTcp
+    lateinit private var socket: SipConnectionTcp
+    lateinit private var serverSocket: SipConnectionTcpServer
 
-    var cbLock = ReentrantLock()
-    var requestCallbacks: Map<SipMethod, ((SipRequest) -> Int)> = mapOf()
-    var responseCallbacks: Map<String, ((SipResponse) -> Boolean)> = mapOf()
-    var imsReady = false
+    private val cbLock = ReentrantLock()
+    private var requestCallbacks: Map<SipMethod, ((SipRequest) -> Int)> = mapOf()
+    private var responseCallbacks: Map<String, ((SipResponse) -> Boolean)> = mapOf()
+    private var imsReady = false
     var imsReadyCallback: (() -> Unit)? = null
     var imsFailureCallback: (() -> Unit)? = null
     var onSmsReceived: ((Int, String, ByteArray) -> Unit)? = null
+    var onSmsStatusReportReceived: ((Int, String, ByteArray) -> Unit)? = null
+    private val smsLock = ReentrantLock()
+    private var smsToken = 0
+    private val smsHeadersMap = mutableMapOf<Int, smsHeaders>()
 
     fun setRequestCallback(method: SipMethod, cb: (SipRequest) -> Int) {
         cbLock.withLock { requestCallbacks += (method to cb) }
@@ -105,20 +116,21 @@ class SipHandler(val ctxt: Context) {
             return handleResponse(msg)
         }
         if (msg !is SipRequest) {
-            // invalid message,stop tryng
+            // invalid message, stop trying
             Rlog.d(TAG, "Got invalid message, closing socket!")
             return false
         }
 
         val requestCb = cbLock.withLock { requestCallbacks[msg.method] }
         var status = 200
+        // XXX default requestCb = notification?
         if (requestCb != null) {
             status = requestCb(msg)
         }
         val reply =
             SipResponse(
                 statusCode = status,
-                statusString = "OK",
+                statusString = if (status == 200) "OK" else "ERROR",
                 headersParam =
                     msg.headers
                         .filter { (k, _) -> k in listOf("cseq", "via", "from", "to", "call-id") }
@@ -160,11 +172,6 @@ class SipHandler(val ctxt: Context) {
             cbLock.withLock { responseCallbacks -= callId }
         }
         return true
-    }
-
-    fun handleSms(request: SipRequest): Int {
-        onSmsReceived?.invoke(1234, "3gpp2", request.body)
-        return 200
     }
 
     fun connect() {
@@ -418,7 +425,42 @@ class SipHandler(val ctxt: Context) {
         return true
     }
 
-    fun sendSms(pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
+    fun handleSms(request: SipRequest): Int {
+        val sms = request.body.SipSmsDecode()
+        if (sms == null) {
+            Rlog.w(TAG, "Could not decode sms pdu")
+            return 500
+        }
+        Rlog.d(TAG, "Decoded SMS type ${sms.type}, ${sms.pdu?.toString()}")
+        when (sms.type) {
+            SmsType.RP_DATA_FROM_NETWORK -> {
+                val receivedCb = onSmsReceived
+                if (receivedCb == null) {
+                    Rlog.d(TAG, "No onSmsReceived callback!")
+                    return 500
+                }
+
+                val token = smsLock.withLock { smsToken++ }
+                val dest =
+                    request.headers["from"]!![0]
+                        .getParams()
+                        .component1()
+                        .trimStart('<')
+                        .trimEnd('>')
+                val callId = request.headers["call-id"]!![0]
+                val cseq = request.headers["cseq"]!![0]
+                smsHeadersMap[token] = smsHeaders(dest, callId, cseq)
+                receivedCb(token, "3gpp", sms.pdu!!)
+            }
+            SmsType.RP_ACK_FROM_NETWORK -> {
+                onSmsStatusReportReceived?.invoke(sms.ref.toInt(), "3gpp", ByteArray(2))
+            }
+            else -> return 500
+        }
+        return 200
+    }
+
+    fun sendSms(smsc: String?, pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
         Rlog.d(TAG, "got sms to send, failing for now")
         failCb()
         /*
@@ -428,16 +470,16 @@ class SipHandler(val ctxt: Context) {
                 "XXX get destination",
                 commonHeaders +
                     """
-            Event: reg
-            Expires: 600000
-            Supported: sec-agree
-            Require: sec-agree
-            Proxy-Require: sec-agree
-            Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
-            """.toSipHeadersMap(),
+                    Event: reg
+                    Expires: 600000
+                    Supported: sec-agree
+                    Require: sec-agree
+                    Proxy-Require: sec-agree
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    """.toSipHeadersMap(),
                 pdu
             )
-        setresponseCallback(msg.headers["call-id"]!![0], { msg: SipResponse ->
+        setResponseCallback(msg.headers["call-id"]!![0], { msg: SipResponse ->
                 if (msg.statusCode == 200) {
                     successCb()
                 } else {
@@ -448,5 +490,42 @@ class SipHandler(val ctxt: Context) {
         Rlog.d(TAG, "Sending $msg")
         synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
         */
+    }
+
+    fun sendSmsAck(token: Int, ref: Int, error: Boolean): Unit {
+        Rlog.d(TAG, "sending sms ack")
+        val body = SipSmsEncodeAck(ref.toByte())
+        val headers = smsHeadersMap.remove(token)
+        if (headers == null) {
+            // XXX return error?
+            return
+        }
+        // do not send ack on error
+        // Should we send an error report?
+        if (error) {
+            return
+        }
+        val msg =
+            SipRequest(
+                SipMethod.MESSAGE,
+                headers.dest,
+                commonHeaders +
+                    """
+                    Cseq: ${headers.cseq}
+                    In-Reply-To: ${headers.callId}
+                    Content-Type: application/vnd.3gpp.sms
+                    Proxy-Require: sec-agree
+                    Require: sec-agree
+                    Allow: MESSAGE
+                    Supported: path, gruu, sec-agree
+                    Request-Disposition: no-fork
+                    Accept-Contact: *;+g.3gpp.smsip
+                    """.toSipHeadersMap(),
+                body
+            )
+        // ignore response
+        setResponseCallback(msg.headers["call-id"]!![0], { true })
+        Rlog.d(TAG, "Sending $msg")
+        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
     }
 }

@@ -85,6 +85,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
         }
         imsSms.sipHandler = sipHandler
         sipHandler.onSmsReceived = imsSms::onSmsReceived
+        sipHandler.onSmsStatusReportReceived = imsSms::onSmsStatusReportReceived
         imsService.getRegistration(slotId).onRegistering(REGISTRATION_TECH_LTE)
         sipHandler.getVolteNetwork()
 
