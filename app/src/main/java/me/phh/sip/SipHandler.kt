@@ -132,22 +132,9 @@ class SipHandler(val ctxt: Context) {
                 statusCode = status,
                 statusString = if (status == 200) "OK" else "ERROR",
                 headersParam =
-                    msg.headers
-                        .filter { (k, _) -> k in listOf("cseq", "via", "from", "to", "call-id") }
-                        .mapKeys { (k, _) ->
-                            // reply has to and from swapped
-                            when (k) {
-                                "to" -> {
-                                    "from"
-                                }
-                                "from" -> {
-                                    "to"
-                                }
-                                else -> {
-                                    k
-                                }
-                            }
-                        }
+                    msg.headers.filter { (k, _) ->
+                        k in listOf("cseq", "via", "from", "to", "call-id")
+                    }
             )
         Rlog.d(TAG, "Replying back with $reply")
         synchronized(writer) { writer.write(reply.toByteArray()) }

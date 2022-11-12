@@ -79,7 +79,6 @@ open class SipCommonMessage(
         /* some headers can be automatically generated:
          * - Content-Length (rfc3261 section 20.14)
          * - Call-ID if not already set
-         * - 'tag' in 'From' if not already set (rfc3261 section 19.3)
          * - 'branch' in 'Via' if not already set (rfc3261 section 20.42)
          * - Max-Forwards
          *
@@ -98,17 +97,6 @@ open class SipCommonMessage(
         }
         if (headersParam["user-agent"] == null) {
             newHeaders["user-agent"] = listOf("phh ims 0.1")
-        }
-        val from = headersParam["from"]
-        if (from != null) {
-            newHeaders["from"] =
-                from.map {
-                    if (it.contains(";tag=")) {
-                        it
-                    } else {
-                        "$it;tag=${randomBytes(6).toHex()}"
-                    }
-                }
         }
         val via = headersParam["via"]
         if (via != null) {
@@ -156,6 +144,18 @@ data class SipRequest(
             newHeaders["cseq"] = listOf("1 ${this.method}")
         }
 
+        val from = headersParam["from"]
+        if (from != null) {
+            newHeaders["from"] =
+                from.map {
+                    if (it.contains(";tag=")) {
+                        it
+                    } else {
+                        "$it;tag=${randomBytes(6).toHex()}"
+                    }
+                }
+        }
+
         return headersParam + newHeaders
     }
 }
@@ -169,10 +169,12 @@ data class SipResponse(
 ) : SipMessage() {
     private val message: SipCommonMessage
     init {
+        val headers = if (autofill) completeResponseHeaders() else headersParam
+
         message =
             SipCommonMessage(
                 firstLine = "SIP/2.0 $statusCode $statusString",
-                headersParam = headersParam,
+                headersParam = headers,
                 body = body,
                 autofill = autofill,
             )
@@ -180,6 +182,24 @@ data class SipResponse(
     override val firstLine = message.firstLine
     override val headers = message.headers
     override fun toString(): String = message.toString()
+
+    private fun completeResponseHeaders(): SipHeadersMap {
+        val newHeaders = mutableMapOf<String, List<SipHeader>>()
+
+        val to = headersParam["to"]
+        if (to != null) {
+            newHeaders["to"] =
+                to.map {
+                    if (it.contains(";tag=")) {
+                        it
+                    } else {
+                        "$it;tag=${randomBytes(6).toHex()}"
+                    }
+                }
+        }
+
+        return headersParam + newHeaders
+    }
 }
 
 /* rfc3261 section 7 describes how headers should be formed, in particular:
