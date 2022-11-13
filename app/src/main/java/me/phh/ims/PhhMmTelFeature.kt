@@ -3,7 +3,6 @@ package me.phh.ims
 import android.os.Message
 import android.telephony.Rlog
 import android.telephony.ims.ImsCallProfile
-import android.telephony.ims.feature.CapabilityChangeRequest
 import android.telephony.ims.feature.ImsFeature
 import android.telephony.ims.feature.MmTelFeature
 import android.telephony.ims.stub.ImsCallSessionImplBase
@@ -14,7 +13,11 @@ import android.telephony.ims.stub.ImsUtImplBase
 import me.phh.sip.SipHandler
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
-class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
+// We extend it through java once because kotlin cannot override
+// changeEnabledCapabilities that has a protected (CapabilityCallbackProxy)
+// argument. See this stackoverflow link for why we cannot do it directly:
+// https://stackoverflow.com/questions/49284094/inheritance-from-java-class-with-a-public-method-accepting-a-protected-class-in/49287402#49287402
+class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
     companion object {
         private const val TAG = "PHH MmTelFeature"
     }
@@ -37,18 +40,6 @@ class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
     fun getInstance(slotId: Int): PhhMmTelFeature {
         Rlog.d(TAG, "$slotId getInstance")
         return PhhMmTelFeature(slotId)
-    }
-
-    /*override*/ fun changeEnabledCapabilities(
-        request: CapabilityChangeRequest,
-        c: ImsFeature /*.CapabilityCallbackProxy*/
-    ) {
-        // argument c is protected in ImsFeature, but we extend MmTelFeature which
-        // extends ImsFeature so it should be accessible. Retry when building inline
-        // with android? for now just roll with it...
-        // This function won't be called but a proper stub is implemented in
-        // PhhKludgeMmTelFeature
-        Rlog.d(TAG, "$slotId changeEnabledCapabilities")
     }
 
     override fun getFeatureState(): Int {
