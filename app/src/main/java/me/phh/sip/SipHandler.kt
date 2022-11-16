@@ -453,7 +453,13 @@ class SipHandler(val ctxt: Context) {
         return 200
     }
 
-    fun sendSms(smsSmsc: String?, pdu: ByteArray, successCb: (() -> Unit), failCb: (() -> Unit)) {
+    fun sendSms(
+        smsSmsc: String?,
+        pdu: ByteArray,
+        ref: Int,
+        successCb: (() -> Unit),
+        failCb: (() -> Unit)
+    ) {
         // make ref up?
         val smsc =
             if (smsSmsc != null) smsSmsc
@@ -464,7 +470,7 @@ class SipHandler(val ctxt: Context) {
                 val smscMatchRegex = Regex("([0-9]+)")
                 smscMatchRegex.find(smscStr!!)!!.groupValues[1]
             }
-        val data = SipSmsEncodeSms(0, smsc, pdu)
+        val data = SipSmsEncodeSms(ref.toByte(), "+$smsc", pdu)
         Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
         /* XXX test
         val t = SmsMessage.getSubmitPdu(smsc, "xxxxxxxxxxx", "hello", false)
@@ -487,7 +493,7 @@ class SipHandler(val ctxt: Context) {
                 commonHeaders +
                     """
                     From: <$mySip>
-                    To: <sip:+$smsc@$realm>
+                    To: <sip:+$smsc@$realm;user=phone>
                     P-Preferred-Identity: <$mySip>
                     P-Asserted-Identity: <$mySip>
                     Expires: 600000
@@ -495,7 +501,7 @@ class SipHandler(val ctxt: Context) {
                     Supported: sec-agree
                     Require: sec-agree
                     Proxy-Require: sec-agree
-                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    Allow: MESSAGE
                     """.toSipHeadersMap(),
                 data
             )

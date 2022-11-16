@@ -52,6 +52,7 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
         sipHandler.sendSms(
             smsc,
             pdu,
+            messageRef,
             {
                 // success cb
                 onSendSmsResultSuccess(token, messageRef)
