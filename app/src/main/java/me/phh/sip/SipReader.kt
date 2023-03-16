@@ -85,7 +85,7 @@ class SipReader(private val input: InputStream) : BufferedInputStream(input) {
         return String(line, Charsets.US_ASCII)
     }
 
-    fun readNBytes(len: Int): ByteArray {
+    fun readNBytes2(len: Int): ByteArray {
         // similar to inputStream readNBytes, loop if required
         // but abort if we did not read full
         var bytes = ByteArray(len)

@@ -307,7 +307,7 @@ fun SipReader.parseMessage(): SipMessage? {
     val firstLine = this.readLine() ?: return null
     val headers = this.parseHeaders()
     val body =
-        headers["content-length"]?.getOrNull(0)?.toInt()?.let { this.readNBytes(it) }
+        headers["content-length"]?.getOrNull(0)?.toInt()?.let { this.readNBytes2(it) }
             ?: ByteArray(0)
     // TODO: parse body depending on content type (e.g. multipart)
     val firstLineSplit = firstLine.split(" ")
