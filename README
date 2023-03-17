@@ -1,0 +1,2 @@
+How to build using gradle?
+zip -d ./platforms/android-33/android.jar android/telephony/ims/feature/MmTelFeature.class android/telephony/ims/feature/MmTelFeature\$MmTelCapabilities.class
