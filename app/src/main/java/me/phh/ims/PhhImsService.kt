@@ -16,8 +16,7 @@ class PhhImsBroadcastReceiver : BroadcastReceiver() {
         val TAG = "Phh ImsBroadcastReceiver"
     }
 
-    override fun onReceive(ctxt: Context, intent: Intent) {
-        Rlog.d(TAG, "onReceive")
+    
     }
 }
 
@@ -27,8 +26,7 @@ class PhhImsService : ImsService() {
         var instance: PhhImsService? = null
     }
 
-    override fun onCreate() {
-        Rlog.d(TAG, "onCreate")
+    
     }
 
     // XXX one per slot id...
@@ -36,7 +34,7 @@ class PhhImsService : ImsService() {
     override fun createMmTelFeature(slotId: Int): MmTelFeature {
         Rlog.d(TAG, "createMmTelFeature")
         var feature = mmTelFeature
-        if (feature == null) {
+        if (feature == user) {
             feature = PhhMmTelFeature(slotId)
             mmTelFeature = feature
         }
