@@ -164,9 +164,14 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun connect() {
-        Rlog.d(TAG, "connect")
+        Rlog.d(TAG, "Trying to connect to SIP server")
         val lp = connectivityManager.getLinkProperties(network)
         val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
+        if (pcscfs.size == 0) {
+            Rlog.w(TAG, "Had no Pcscf Sever defined, aborting")
+            imsFailureCallback?.invoke()
+            return
+        }
         val pcscf = pcscfs[0]
 
         localAddr = lp.linkAddresses[0].address
