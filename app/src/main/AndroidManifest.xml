@@ -11,6 +11,14 @@
     <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <!-- Exempt from process freezer -->
     <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    <!-- Wake even if doze -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- maybe switch to USE_EXACT_ALARM later™:
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+                     android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"
+                     android:minSdkVersion="33" />
+    -->
 
     <application
         android:allowBackup="true"
@@ -46,6 +54,10 @@
             <action android:name="android.telephony.ims.ImsService" />
         </intent-filter>
       </service>
+      <!--<receiver android:name=".AlarmBroadcastReceiver"
+      android:exported="false" />-->
+      <!--android:enabled="true"-->
     </application>
+    <protected-broadcast android:name="me.phh.ims.ALARM_PERIODIC_REGISTER" />
 
 </manifest>

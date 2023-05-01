@@ -19,7 +19,6 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private data class smsHeaders(
@@ -244,7 +243,7 @@ class SipHandler(val ctxt: Context) {
         serverSocket.enableIpsec(ipSecBuilder, ipSecManager, clientSpiS, serverSpiC)
         socket.connect(portS)
         updateCommonHeaders(socket)
-        register(socket.writer)
+        register()
         val regReply = socket.reader.parseMessage()!!
         Rlog.d(TAG, "Received $regReply")
 
@@ -257,15 +256,6 @@ class SipHandler(val ctxt: Context) {
         setResponseCallback(registerHeaders["call-id"]!![0], ::registerCallback)
         setRequestCallback(SipMethod.MESSAGE, ::handleSms)
         handleResponse(regReply)
-
-        // we registered! Kick in thread to register every 3000s
-        CoroutineScope(Dispatchers.IO).launch {
-            while (true) {
-                delay(3_000_000)
-                register(socket.writer)
-                // don't try to read reply, main thread will
-            }
-        }
 
         // two ways we'll get incoming messages:
         // - reply to normal socket (just read forever)
@@ -324,13 +314,16 @@ class SipHandler(val ctxt: Context) {
         commonHeaders += newHeaders
     }
 
-    fun register(writer: OutputStream) {
+    fun register(_writer: OutputStream? = null) {
         // XXX samsung rom apparently regenerates local SPIC/SPIS every register,
         // this doesn't affect current connections but possibly affects new incoming
         // connections ? Just keep it constant for now
         // XXX samsung doesn't increment cnonce but it would be better to avoid replays?
         // well that'd only matter if the server refused replays, so keep as is.
         // XXX timeout/retry? notification on fail? receive on thread?
+
+        val writer = _writer ?: socket.writer
+
         fun secClient(ealg: String, alg: String) =
             "ipsec-3gpp;prot=esp;mod=trans;spi-c=${clientSpiC.spi};spi-s=${clientSpiS.spi};port-c=${socket.localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
         val secClientLine =

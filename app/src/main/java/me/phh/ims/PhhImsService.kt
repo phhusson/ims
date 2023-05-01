@@ -1,9 +1,12 @@
 package me.phh.ims
 
-import android.content.BroadcastReceiver
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Binder
+import android.os.SystemClock
 import android.telephony.Rlog
 import android.telephony.ims.ImsService
 import android.telephony.ims.feature.MmTelFeature
@@ -11,24 +14,36 @@ import android.telephony.ims.feature.RcsFeature
 import android.telephony.ims.stub.ImsConfigImplBase
 import android.telephony.ims.stub.ImsRegistrationImplBase
 
-class PhhImsBroadcastReceiver : BroadcastReceiver() {
-    companion object {
-        val TAG = "Phh ImsBroadcastReceiver"
-    }
-
-    override fun onReceive(ctxt: Context, intent: Intent) {
-        Rlog.d(TAG, "onReceive")
-    }
-}
-
 class PhhImsService : ImsService() {
     companion object {
         val TAG = "PHH ImsService"
         var instance: PhhImsService? = null
     }
 
+    val receiver: PhhImsBroadcastReceiver = PhhImsBroadcastReceiver()
+
     override fun onCreate() {
         Rlog.d(TAG, "onCreate")
+
+        val intentFilter = IntentFilter()
+        intentFilter.addAction(receiver.ALARM_PERIODIC_REGISTER)
+        this.registerReceiver(receiver, intentFilter, Context.RECEIVER_NOT_EXPORTED)
+
+        this.armPeriodicRegisterAlarm()
+    }
+    fun armPeriodicRegisterAlarm() {
+        val alarmManager = this.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(receiver.ALARM_PERIODIC_REGISTER)
+        val pendingIntent =
+            PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        // We want recurring 3000s but recurring alarms don't wake up from
+        // doze: alarm will re-arm itself.
+        alarmManager.setAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + 3_000_000,
+            pendingIntent
+        )
+        Rlog.d(TAG, "Alarm set")
     }
 
     // XXX one per slot id...
@@ -53,8 +68,6 @@ class PhhImsService : ImsService() {
         Rlog.d(TAG, "getConfig")
         return config
     }
-
-    val receiver: PhhImsBroadcastReceiver = PhhImsBroadcastReceiver()
 
     class LocalBinder : Binder() {
         fun getService(): PhhImsService {
