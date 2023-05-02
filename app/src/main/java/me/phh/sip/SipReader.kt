@@ -68,14 +68,14 @@ class SipReader(private val input: InputStream) : BufferedInputStream(input) {
                 }
                 '\n'.code -> {
                     var lineEnd = pos - 2
-                    if (lineEnd >= markpos && buf[lineEnd] == '\r'.toByte()) lineEnd--
+                    if (lineEnd >= markpos && buf[lineEnd] == '\r'.code.toByte()) lineEnd--
                     if (lineEnd < markpos) return null
 
                     line += buf.slice(markpos..lineEnd)
                     if (!continueToNextLine()) break
                     // check ate extra whitespaces, add a single space to our buffer
                     // and continue appending to it
-                    line += ' '.toByte()
+                    line += ' '.code.toByte()
                 }
             }
         }
