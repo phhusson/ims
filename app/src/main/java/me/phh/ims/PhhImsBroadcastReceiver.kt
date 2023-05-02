@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 
 class PhhImsBroadcastReceiver : BroadcastReceiver() {
     companion object {
-        const val TAG = "PHH ImsBroadcastReceiver"
+        private const val TAG = "PHH ImsBroadcastReceiver"
     }
 
     val ALARM_PERIODIC_REGISTER = "me.phh.ims.ALARM_PERIODIC_REGISTER"

@@ -16,7 +16,7 @@ fun InputStream.sipReader(): SipReader = SipReader(this)
 @OptIn(ExperimentalStdlibApi::class)
 class SipReader(private val input: InputStream) : BufferedInputStream(input) {
     companion object {
-        val TAG = "PHH SipReader"
+        private const val TAG = "PHH SipReader"
     }
 
     //  internal buffer size is not exposed but default is 2k so

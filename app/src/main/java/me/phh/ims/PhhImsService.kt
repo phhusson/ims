@@ -16,7 +16,7 @@ import android.telephony.ims.stub.ImsRegistrationImplBase
 
 class PhhImsService : ImsService() {
     companion object {
-        val TAG = "PHH ImsService"
+        private const val TAG = "PHH ImsService"
         var instance: PhhImsService? = null
     }
 

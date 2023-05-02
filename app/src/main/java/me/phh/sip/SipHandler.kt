@@ -29,7 +29,7 @@ private data class smsHeaders(
 
 class SipHandler(val ctxt: Context) {
     companion object {
-        val TAG = "PHH SipHandler"
+        private const val TAG = "PHH SipHandler"
     }
 
     private val subscriptionManager: SubscriptionManager

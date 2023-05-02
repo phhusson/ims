@@ -9,7 +9,7 @@ import me.phh.sip.SipHandler
 // frameworks/base/telephony/java/android/telephony/ims/stub/ImsSmsImplBase.java
 class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
     companion object {
-        val TAG = "Phh ImsSms"
+        private const val TAG = "Phh ImsSms"
     }
 
     lateinit var sipHandler: SipHandler

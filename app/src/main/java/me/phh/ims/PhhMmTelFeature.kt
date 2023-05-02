@@ -16,7 +16,7 @@ import me.phh.sip.SipHandler
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
 class PhhMmTelFeature(val slotId: Int) : PhhKludgeMmTelFeature(slotId) {
     companion object {
-        val TAG = "PHH MmTelFeature"
+        private const val TAG = "PHH MmTelFeature"
     }
 
     val imsSms = PhhImsSms(slotId)

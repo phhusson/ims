@@ -7,7 +7,7 @@ import android.telephony.ims.stub.ImsConfigImplBase
 
 class PhhImsConfig() : ImsConfigImplBase() {
     companion object {
-        val TAG = "PHH ImsConfig"
+        private const val TAG = "PHH ImsConfig"
     }
 
     val intMap = HashMap<Int, Int>()
