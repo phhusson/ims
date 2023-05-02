@@ -23,7 +23,6 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
         isRetry: Boolean,
         pdu: ByteArray
     ) {
-        val content = String(pdu)
         // called when android tries to send a sms?
         Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc")
         if (format != "3gpp") {
