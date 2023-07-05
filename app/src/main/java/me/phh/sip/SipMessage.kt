@@ -46,7 +46,8 @@ abstract class SipMessage() {
                 { lines, (header, values) ->
                     lines +
                         values.map {
-                            "${header.replaceFirstChar(Char::titlecase)}: ${it.toString()}"
+                            val newHeader = header.split("-").map { it.replaceFirstChar(Char::titlecase) }.joinToString("-")
+                            "$newHeader: ${it.toString()}"
                         }
                 }
             )
