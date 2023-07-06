@@ -514,7 +514,7 @@ class SipHandler(val ctxt: Context) {
         setResponseCallback(
             msg.headers["call-id"]!![0],
             { resp: SipResponse ->
-                if (resp.statusCode == 200) {
+                if (resp.statusCode == 200 || resp.statusCode == 202) {
                     successCb()
                 } else {
                     failCb()
