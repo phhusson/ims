@@ -337,10 +337,13 @@ class SipHandler(val ctxt: Context) {
 
         val writer = _writer ?: socket.writer
 
-        fun secClient(ealg: String, alg: String) =
+        fun secClient(alg: String, ealg: String) =
             "ipsec-3gpp;prot=esp;mod=trans;spi-c=${clientSpiC.spi};spi-s=${clientSpiS.spi};port-c=${socket.localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+        val algs = listOf("hmac-sha-1-96", "hmac-md5-96")
+        val ealgs = listOf("null", "aes-cbc")
+        val secClients = algs.flatMap { alg -> ealgs.map { ealg -> secClient(alg, ealg) }}
         val secClientLine =
-            "Security-Client: ${secClient("null", "hmac-sha-1-96")}, ${secClient("aes-cbc", "hmac-sha-1-96")}"
+            "Security-Client: ${secClients.joinToString(", ")}"
 
         val msg =
             SipRequest(
