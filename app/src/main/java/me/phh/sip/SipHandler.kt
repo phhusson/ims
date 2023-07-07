@@ -217,9 +217,13 @@ class SipHandler(val ctxt: Context) {
         val securityServer = plainRegReply.headers["security-server"]!!
         commonHeaders += ("security-verify" to securityServer)
         registerHeaders += ("security-verify" to securityServer)
+        val supported_alg = listOf("hmac-sha-1-96", "hmac-md5-96")
+        val supported_ealg = listOf("aes-cbc", "null")
         val (securityServerType, securityServerParams) =
             securityServer
                 .map { it.getParams() }
+                .filter { supported_ealg.contains(it.component2()["ealg"]) }
+                .filter { supported_alg.contains(it.component2()["alg"]) }
                 .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
         require(securityServerType == "ipsec-3gpp")
 
@@ -233,11 +237,15 @@ class SipHandler(val ctxt: Context) {
         serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
 
         val ealg = securityServerParams["ealg"]
-        // SHA1-96 mac key must be 160 bits, pad ik
-        val hmac_key = akaResult.ik + ByteArray(4)
+        val (alg, hmac_key) = if (securityServerParams["alg"] == "hmac-sha-1-96") {
+            // sha-1-96 mac key must be 160 bits, pad ik
+            IpSecAlgorithm.AUTH_HMAC_SHA1 to akaResult.ik + ByteArray(4)
+        } else {
+            IpSecAlgorithm.AUTH_HMAC_MD5 to akaResult.ik
+        }
         val ipSecBuilder =
             IpSecTransform.Builder(ctxt)
-                .setAuthentication(IpSecAlgorithm(IpSecAlgorithm.AUTH_HMAC_SHA1, hmac_key, 96))
+                .setAuthentication(IpSecAlgorithm(alg, hmac_key, 96))
                 .also {
                     if (ealg == "aes-cbc") {
                         it.setEncryption(IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck))

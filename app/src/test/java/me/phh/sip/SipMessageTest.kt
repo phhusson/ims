@@ -22,7 +22,7 @@ val messageRequest =
     In-Reply-To: 4ee646d0-6274eee0@[2001:1234:1234:0000:0000:0000:0000:000d]
     k:path,   gruu,sec-agree
     User-Agent: ims phh v0.1
-    Security-Verify: invalid, ipsec-3gpp;q=0.5;alg=hmac-sha-1-96;prot=esp;mod=trans;ealg=null;spi-c=52340051;spi-s=3859;port-c=7807;port-s=7777, invalid2;q=0.1
+    Security-Verify: invalid, ipsec-3gpp;q=0.5;alg=hmac-sha-1-96;prot=esp;mod=trans;ealg=null;spi-c=52340051;spi-s=3859;port-c=7807;port-s=7777, invalid2;q=0.9, ipsec-3gpp;q=0.6;alg=hmac-md5-96;prot=esp;mod=trans;ealg=aes-cbc;spi-c=52340051;spi-s=3859;port-c=7807;port-s=7777, ipsec-3gpp;q=0.7;alg=notsupported;prot=esp;mod=trans;ealg=aes-cbc;spi-c=52340051;spi-s=3859;port-c=7807;port-s=7777,
     Request-Disposition: no-fork
     P-Preferred-Identity: <sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>
     Accept-Contact: *;+g.3gpp.smsip
@@ -71,12 +71,15 @@ class SipMessageTests {
         val (fromVal, fromParams) = headers["from"]!![0].getParams()
         require(fromVal == "<sip:+818012341234@ims.mnc051.mcc440.3gppnetwork.org>")
         require(fromParams == mapOf("tag" to "fd387c84"))
+        val supported_alg = listOf("hmac-md5-96", "hmac-sha-1-96")
         val (svValue, svParams) =
             headers["security-verify"]!!
                 .map { it.getParams() }
+                .filter { supported_alg.contains(it.component2()["alg"]) }
                 .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
         require(svValue == "ipsec-3gpp")
         require(svParams["prot"] == "esp")
+        require(svParams["alg"] == "hmac-md5-96")
     }
 
     @Test
