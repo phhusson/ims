@@ -222,7 +222,10 @@ class SipHandler(val ctxt: Context) {
         val (securityServerType, securityServerParams) =
             securityServer
                 .map { it.getParams() }
-                .filter { supported_ealg.contains(it.component2()["ealg"]) }
+                .filter {
+                    val thisEAlg = it.component2()["ealg"] ?: "null"
+                    supported_ealg.contains(thisEAlg)
+                }
                 .filter { supported_alg.contains(it.component2()["alg"]) }
                 .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
         require(securityServerType == "ipsec-3gpp")
@@ -236,7 +239,7 @@ class SipHandler(val ctxt: Context) {
         val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
         serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
 
-        val ealg = securityServerParams["ealg"]
+        val ealg = securityServerParams["ealg"] ?: "null"
         val (alg, hmac_key) = if (securityServerParams["alg"] == "hmac-sha-1-96") {
             // sha-1-96 mac key must be 160 bits, pad ik
             IpSecAlgorithm.AUTH_HMAC_SHA1 to akaResult.ik + ByteArray(4)
