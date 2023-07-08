@@ -65,6 +65,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
 
     override fun onFeatureReady() {
         Rlog.d(TAG, "$slotId onFeatureReady")
+        if(this::sipHandler.isInitialized) return
 
         // call onRegistering first then
         // register SIP here and call onRegistered after .. register.
