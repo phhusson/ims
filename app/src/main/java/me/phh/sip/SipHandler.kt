@@ -66,6 +66,7 @@ class SipHandler(val ctxt: Context) {
     private var commonHeaders = "".toSipHeadersMap()
     private var contact = ""
     private var mySip = ""
+    private var myTel = ""
 
     // too many lateinit, bad separation?
     lateinit private var localAddr: InetAddress
@@ -310,8 +311,12 @@ class SipHandler(val ctxt: Context) {
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(_network: Network) {
                     Rlog.d(TAG, "Got IMS network.")
-                    network = _network
-                    connect()
+                    if(!this@SipHandler::network.isInitialized) {
+                        network = _network
+                        connect()
+                    } else {
+                        Rlog.d(TAG, "... don't try anything")
+                    }
                 }
             }
         )
@@ -375,15 +380,20 @@ class SipHandler(val ctxt: Context) {
         // on failure just abort thread, ims will restart
         require(response.statusCode == 200)
 
+        val r =  Regex("lr;[^>]*")
         val route =
             (response.headers.getOrDefault("service-route", emptyList()) +
                     response.headers.getOrDefault("path", emptyList()))
                 .toSet() // remove duplicates
                 .toList()
+                .map {
+                    r.replace(it, "lr")
+                }
 
         val associatedUri =
             response.headers["p-associated-uri"]!!.map { it.trimStart('<').trimEnd('>').split(':') }
         mySip = "sip:" + associatedUri.first { it[0] == "sip" }[1]
+        myTel = associatedUri.first { it[0] == "tel" }[1]
         commonHeaders +=
             mapOf(
                 "route" to route,
@@ -397,20 +407,26 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun subscribe() {
+        val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+        val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+        val contactTel =
+            """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val msg =
             SipRequest(
                 SipMethod.SUBSCRIBE,
                 "$mySip",
                 commonHeaders +
                     """
-                    Contact: $contact
+                    Contact: $contactTel
                     P-Preferred-Identity: <$mySip>
                     Event: reg
                     Expires: 600000
                     Supported: sec-agree
                     Require: sec-agree
                     Proxy-Require: sec-agree
-                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, INFO, MESSAGE, PRACK, OPTIONS
+                    Accept: application/reginfo+xml
+                    P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=20810b8c49752501
                     """.toSipHeadersMap()
             )
         if (!imsReady) {

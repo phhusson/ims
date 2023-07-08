@@ -41,6 +41,28 @@ abstract class SipMessage() {
                     else -> header to values
                 }
             }
+            .sortedBy {
+                when(it.first) {
+                    "via" -> 0
+                    "p-preferred-identity" -> 1
+                    "from" -> 2
+                    "to" -> 3
+                    "event" -> 4
+                    "expires" -> 5
+                    "contact" -> 6
+                    "max-forwards" -> 7
+                    "user-agent" -> 8
+                    "route" -> 9
+                    "call-id" -> 10
+                    "require" -> 11
+                    "proxy-require" -> 12
+                    "cseq" -> 13
+                    "p-access-network-info" -> 14
+                    "content-length" -> 15
+                    "security-verify" -> 16
+                    else -> if(it.first.hashCode() > 0) it.first.hashCode() + 100 else 100 - it.first.hashCode()
+                }
+            }
             .fold(
                 emptyList<String>(),
                 { lines, (header, values) ->
@@ -97,7 +119,7 @@ open class SipCommonMessage(
             newHeaders["max-forwards"] = listOf("70")
         }
         if (headersParam["user-agent"] == null) {
-            newHeaders["user-agent"] = listOf("phh ims 0.1")
+            newHeaders["user-agent"] = listOf("SM-A536B-WE9 Samsung IMS 6.0")
         }
         val via = headersParam["via"]
         if (via != null) {
