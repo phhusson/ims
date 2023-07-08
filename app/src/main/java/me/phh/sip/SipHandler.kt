@@ -318,7 +318,7 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun updateCommonHeaders(socket: SipConnectionTcp) {
-        val local = "[${socket.localAddr.hostAddress}]:${socket.localPort}"
+        val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
         contact =
             """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
