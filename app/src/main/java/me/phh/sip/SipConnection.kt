@@ -5,6 +5,7 @@ import android.net.IpSecTransform
 import android.net.Network
 import java.io.FileDescriptor
 import java.io.OutputStream
+import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -98,18 +99,17 @@ class SipConnectionTcpServer(
     }
 
     fun enableIpsec(
-        ipSecBuilder: IpSecTransform.Builder,
         ipSecManager: IpSecManager,
-        clientSpiS: IpSecManager.SecurityParameterIndex,
-        serverSpiC: IpSecManager.SecurityParameterIndex
+        inTransform: IpSecTransform,
+        outTransform: IpSecTransform
     ) {
-        inTransform = ipSecBuilder.buildTransportModeTransform(remoteAddr, clientSpiS)
+        this.inTransform = inTransform
         ipSecManager.applyTransportModeTransform(
             serverSocketFd,
             IpSecManager.DIRECTION_IN,
             inTransform
         )
-        outTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
+        this.outTransform = outTransform
         ipSecManager.applyTransportModeTransform(
             serverSocketFd,
             IpSecManager.DIRECTION_OUT,
@@ -118,48 +118,40 @@ class SipConnectionTcpServer(
     }
 }
 
-/*
-class SipConnectionUdp(val params: SipConnectionParams): SipConnection() {
-    // UDP "connection"
-    // poll thread: just keep reading messages
-    // XXX resend if no reply within timeout? probably SipManager level...
+class SipConnectionUdp(
+    val network: Network,
+    val remoteAddr: InetAddress,
+    val localAddr: InetAddress,
+    val localPort: Int) {
+
     val socket: DatagramSocket
+    val socketFd : FileDescriptor
+    lateinit var inTransform: IpSecTransform
+    lateinit var outTransform: IpSecTransform
     init {
-        socket = DatagramSocket(params.localPort, params.localAddr)
-        params.network.bindSocket(socket)
-        socket.connect(params.remoteAddr, params.remotePort)
+        socket = DatagramSocket(localPort, localAddr)
+        network.bindSocket(socket)
+        socketFd =
+            socket.javaClass.getMethod("getFileDescriptor\$").invoke(socket)
+                as FileDescriptor
+    }
 
-        // XXX ipSecManager setup, can combine both TCP transforms on same socket here
-
-        thread {
-            // XXX packet size
-            val packetData = ByteArray(4096)
-            val packet = DatagramPacket(packetData, packetData.size)
-            var reader: SipReader? = null
-            while (true) {
-                // There could be multiple message in a single datagram
-                // so keep reader around until no message can be read
-                // Invalid data still returns a 'SpiCommonMessage' that
-                // should error in callback.
-                if (reader == null) {
-                    socket.receive(packet)
-                    val buffer = packet.getData()
-                    reader = buffer.inputStream().sipReader()
-                }
-                val message = reader.parseMessage()
-                if (message == null) {
-                    reader = null
-                    continue
-                }
-                if (!params.callback(message)) {
-                    // callback failure means unexpected data received,
-                    // abort thread.
-                    // XXX signal this to SipManager so it can reconnect
-                    socket.close()
-                    break
-                }
-            }
-        }
+    fun enableIpsec(
+        ipSecManager: IpSecManager,
+        inTransform: IpSecTransform,
+        outTransform: IpSecTransform
+    ) {
+        this.inTransform = inTransform
+        ipSecManager.applyTransportModeTransform(
+            socketFd,
+            IpSecManager.DIRECTION_IN,
+            inTransform
+        )
+        this.outTransform = outTransform
+        ipSecManager.applyTransportModeTransform(
+            socketFd,
+            IpSecManager.DIRECTION_OUT,
+            outTransform
+        )
     }
 }
-*/

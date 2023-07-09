@@ -12,7 +12,10 @@ import android.telephony.Rlog
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import java.net.DatagramPacket
 import java.net.InetAddress
 import java.net.SocketException
 import java.util.concurrent.locks.ReentrantLock
@@ -81,6 +84,7 @@ class SipHandler(val ctxt: Context) {
     lateinit private var plainSocket: SipConnectionTcp
     lateinit private var socket: SipConnectionTcp
     lateinit private var serverSocket: SipConnectionTcpServer
+    lateinit private var serverSocketUdp: SipConnectionUdp
 
     private val cbLock = ReentrantLock()
     private var requestCallbacks: Map<SipMethod, ((SipRequest) -> Int)> = mapOf()
@@ -185,6 +189,8 @@ class SipHandler(val ctxt: Context) {
         socket = SipConnectionTcp(network, pcscfAddr, plainSocket.localAddr)
         serverSocket =
             SipConnectionTcpServer(network, pcscfAddr, plainSocket.localAddr, socket.localPort + 1)
+        serverSocketUdp =
+            SipConnectionUdp(network, pcscfAddr, plainSocket.localAddr, socket.localPort + 1)
 
         updateCommonHeaders(plainSocket)
         register(plainSocket.writer)
@@ -255,8 +261,11 @@ class SipHandler(val ctxt: Context) {
                     }
                 }
 
+        val serverInTransform = ipSecBuilder.buildTransportModeTransform(pcscfAddr, clientSpiS)
+        val serverOutTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
         socket.enableIpsec(ipSecBuilder, ipSecManager, clientSpiC, serverSpiS)
-        serverSocket.enableIpsec(ipSecBuilder, ipSecManager, clientSpiS, serverSpiC)
+        serverSocket.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
+        serverSocketUdp.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
         socket.connect(portS)
         updateCommonHeaders(socket)
         register()
@@ -294,6 +303,22 @@ class SipHandler(val ctxt: Context) {
                 val writer = client.getOutputStream()
                 while (parseMessage(reader, writer)) {}
                 client.close()
+            }
+        }
+        CoroutineScope(Dispatchers.IO).launch {
+            val bufferIn = ByteArray(128*1024)
+            val dgramPacketIn = DatagramPacket(bufferIn, bufferIn.size)
+            val writer = ByteArrayOutputStream()
+            while (true) {
+                serverSocketUdp.socket.receive(dgramPacketIn)
+                Rlog.d(TAG, "Received dgram packet")
+                val baIs = ByteArrayInputStream(dgramPacketIn.data, dgramPacketIn.offset, dgramPacketIn.length)
+                val reader = baIs.sipReader()
+                while (parseMessage(reader, writer)) {}
+                val writerOut = writer.toByteArray()
+                val dgramPacketOut = DatagramPacket(writerOut, writerOut.size, dgramPacketIn.address, dgramPacketIn.port)
+                serverSocketUdp.socket.send(dgramPacketOut)
+                writer.reset()
             }
         }
     }
