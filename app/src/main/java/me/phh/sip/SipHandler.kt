@@ -184,7 +184,7 @@ class SipHandler(val ctxt: Context) {
         clientSpiC = ipSecManager.allocateSecurityParameterIndex(localAddr)
         clientSpiS = ipSecManager.allocateSecurityParameterIndex(localAddr, clientSpiC.spi + 1)
 
-        plainSocket = SipConnectionTcp(network, pcscfAddr)
+        plainSocket = SipConnectionTcp(network, pcscfAddr, localAddr)
         plainSocket.connect(5060)
         socket = SipConnectionTcp(network, pcscfAddr, plainSocket.localAddr)
         serverSocket =
