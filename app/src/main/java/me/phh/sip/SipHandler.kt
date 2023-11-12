@@ -1,6 +1,10 @@
 package me.phh.sip
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.media.*
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
 import android.net.ConnectivityManager
 import android.net.IpSecAlgorithm
 import android.net.IpSecManager
@@ -22,8 +26,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.*
+import java.net.DatagramSocket
 import java.net.Inet6Address
+import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.sqrt
 
 private data class smsHeaders(
     val dest: String,
@@ -98,8 +105,10 @@ class SipHandler(val ctxt: Context) {
     var imsFailureCallback: (() -> Unit)? = null
     var onSmsReceived: ((Int, String, ByteArray) -> Unit)? = null
     var onSmsStatusReportReceived: ((Int, String, ByteArray) -> Unit)? = null
-    var onIncomingCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? = null
-    var onCancelledCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? = null
+    var onIncomingCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? =
+        null
+    var onCancelledCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? =
+        null
     private val smsLock = ReentrantLock()
     private var smsToken = 0
     private val smsHeadersMap = mutableMapOf<Int, smsHeaders>()
@@ -139,6 +148,7 @@ class SipHandler(val ctxt: Context) {
         if (requestCb != null) {
             status = requestCb(msg)
         }
+        if(status == 0) return true
         val reply =
             SipResponse(
                 statusCode = status,
@@ -292,6 +302,7 @@ class SipHandler(val ctxt: Context) {
         setRequestCallback(SipMethod.PRACK, ::handlePrack)
         setRequestCallback(SipMethod.CANCEL, ::handleCancel)
         setRequestCallback(SipMethod.BYE, ::handleCancel)
+        setRequestCallback(SipMethod.UPDATE, ::handleUpdate)
         handleResponse(regReply)
 
         // two ways we'll get incoming messages:
@@ -478,9 +489,83 @@ class SipHandler(val ctxt: Context) {
         return true
     }
 
+    fun waitPrack(v: Int) {
+        synchronized(prAckWaitLock) {
+            while (prAckWait.contains(v)) {
+                prAckWaitLock.wait(1000)
+            }
+        }
+    }
+
     fun handlePrack(request: SipRequest): Int {
         Rlog.d(TAG, "Received PRACK for ${request.headers["rack"]!![0]}")
+        synchronized(prAckWaitLock) {
+            val id = request.headers["rack"]!![0].split(" ")[0].toInt()
+            prAckWait -= id
+            prAckWaitLock.notifyAll()
+        }
         return 200
+    }
+
+    fun handleUpdate(request: SipRequest): Int {
+        val call = currentCall!!
+        val ipType = if(call.rtpRemoteAddr is Inet6Address) "IP6" else "IP4"
+        val allTracks = listOf(call.amrTrack, call.dtmfTrack).sorted()
+        val mySdp = """
+v=0
+o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+s=phh voice call
+c=IN $ipType ${socket.localAddr.hostAddress}
+b=AS:38
+b=RS:0
+b=RR:0
+t=0 0
+m=audio ${call.rtpSocket.localPort} RTP/AVP ${allTracks.joinToString(" ")}
+b=AS:38
+b=RS:0
+b=RR:0
+a=${call.amrTrackDesc}
+a=ptime:20
+a=maxptime:240
+a=${call.dtmfTrackDesc}
+a=fmtp:${call.amrTrack} max-red=0
+a=fmtp:${call.dtmfTrack} 0-15
+a=curr:qos local sendrecv
+a=curr:qos remote sendrecv
+a=des:qos mandatory local sendrecv
+a=des:qos mandatory remote sendrecv
+a=sendrecv
+                       """.trim().toByteArray()
+
+        val reply =
+            SipResponse(
+                statusCode = 200,
+                statusString = "OK",
+                headersParam =
+                request.headers.filter { (k, _) ->
+                    k in listOf("cseq", "via", "from", "to", "call-id")
+                } + """
+                    Content-Type: application/sdp
+                    Supported: 100rel, replaces, timer
+                    Require: precondition
+                    Call-ID: ${currentCall!!.callHeaders["call-id"]!![0]}
+                """.toSipHeadersMap(),
+                body = mySdp
+            )
+        Rlog.d(TAG, "Replying back with $reply")
+        synchronized(socket.writer) { socket.writer.write(reply.toByteArray()) }
+
+        val myHeaders2 = call.callHeaders - "rseq" - "content-type" - "require"
+        val msg2 =
+            SipResponse(
+                statusCode = 180,
+                statusString = "Ringing",
+                headersParam = myHeaders2
+            )
+        Rlog.d(TAG, "Sending $msg2")
+        synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+
+        return 0
     }
 
     fun handleCancel(request: SipRequest): Int {
@@ -491,11 +576,301 @@ class SipHandler(val ctxt: Context) {
         return 200
     }
 
+    data class Call(
+        val callHeaders: SipHeadersMap,
+        val sdp: ByteArray,
+        val amrTrack: Int,
+        val amrTrackDesc: String,
+        val dtmfTrack: Int,
+        val dtmfTrackDesc: String,
+        val rtpRemoteAddr: InetAddress,
+        val rtpRemotePort: Int,
+        val rtpSocket: DatagramSocket
+    )
+
+
+    @SuppressLint("MissingPermission")
+    fun callEncodeThread() {
+        val call = currentCall!!
+        thread {
+            var sequenceNumber = 0
+
+            while(!callStarted.get()) {
+                val timestamp = sequenceNumber * 160
+                Thread.sleep(20)
+                val rtpHeader = listOf(
+                    // RTP
+                    0x80, //rtp version
+                    call.amrTrack, //payload type
+                    (sequenceNumber shr 8), (sequenceNumber and 0xff),
+                    (timestamp shr 24), ((timestamp shr 16) and 0xff), ((timestamp shr 8) and 0xff), (timestamp and 0xff),
+                    0x03, 0x00, 0xd2, 0x00, //SSRC
+                )
+                val amrNothing = listOf(0x77, 0xc0) // CMR = 12.2kbps, F=0, FT=15=No TX/No RX, Q=1
+
+                val buf = (rtpHeader + amrNothing).map { it.toUByte() }.toUByteArray().toByteArray()
+
+                val dgramPacket =
+                    DatagramPacket(buf, buf.size, call.rtpRemoteAddr, call.rtpRemotePort)
+                call.rtpSocket.send(dgramPacket)
+                sequenceNumber++
+            }
+
+            // DANGER: Don't open the mic before the user acknowledged opening the call!
+
+            val minBufferSize = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val audioRecord = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBufferSize)
+
+            val encoder = MediaCodec.createEncoderByType("audio/3gpp")
+            val mediaFormat = MediaFormat.createAudioFormat("audio/3gpp", 8000, 1)
+            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 12200)
+            encoder.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            audioRecord.startRecording()
+
+            var firstPacket = true
+
+            val d = File("/sdcard/Android/data/me.phh.ims/files/")
+            val fo = FileOutputStream(File(d, "input.amr"))
+            fo.write("#!AMR\n".toByteArray())
+
+            var sinI = 0
+            val buffer = ByteArray(minBufferSize)
+            while (true) {
+                if (callStopped.get()) break
+                val nRead = audioRecord.read(buffer, 0, buffer.size)
+                //Rlog.d(TAG, "Received $nRead Bytes from AudioRecorder average is ${buffer.toList().average()}")
+
+                var sum = 0.0
+                var sum2 = 0.0
+                for(i in 0 until nRead/2) {
+                    val inLow = buffer[2*i].toUByte().toInt()
+                    val inHigh = buffer[2*i+1].toUByte().toInt() shl 8
+                    val value = (inLow or inHigh).toShort()
+                    sum += value.toDouble() * value.toDouble()
+
+                    //val newValue = (value.toInt() shl 4).toShort()
+                   /* val newValue = (20000 * Math.sin(2 * Math.PI * sinI / 20.0)).toInt().toShort()
+                    sinI++
+                    sum2 += newValue.toDouble() * newValue.toDouble()
+                    buffer[2*i] = (newValue.toInt() and 0xff).toByte()
+                    buffer[2*i+1] = (newValue.toInt() shr 8).toByte()*/
+                }
+                //Rlog.d(TAG, "Original average power is ${sqrt(sum.toDouble()) / (nRead/2)}")
+                //Rlog.d(TAG, "Post average power is ${sqrt(sum2.toDouble()) / (nRead/2)}")
+
+                val inBufIdx = encoder.dequeueInputBuffer(-1)
+                val inBuf = encoder.getInputBuffer(inBufIdx)!!
+                inBuf.clear()
+                inBuf.put(buffer, 0, nRead)
+
+                // Fake timestamp but it is not appearing in the output stream anyway
+                encoder.queueInputBuffer(inBufIdx, 0, nRead, System.nanoTime() / 1000, 0)
+
+                val outBufInfo = MediaCodec.BufferInfo()
+                val outBufIdx = encoder.dequeueOutputBuffer(outBufInfo, 0)
+                if (outBufIdx >= 0) {
+                    val outBuf = encoder.getOutputBuffer(outBufIdx)!!
+                    //Rlog.d(TAG, "Received ${outBufInfo.size} bytes from encoder ")
+
+                    val encoderData = ByteArray(outBufInfo.size)
+                    outBuf.get(encoderData)
+                    encoder.releaseOutputBuffer(outBufIdx, false)
+                    fo.write(encoderData)
+
+                    var bufPos = 0
+                    while(bufPos < outBufInfo.size) {
+                        val frameSize = 32 // Read from encoderData[0]
+
+                        // Every 20ms, at 8kHz, we have 160 samples
+                        val timestamp = sequenceNumber * 160
+                        val rtpHeader = listOf(
+                            // RTP
+                            0x80, //rtp version
+                            ( if(firstPacket) 0x80 else 0 ) or call.amrTrack, //payload type
+                            (sequenceNumber shr 8), (sequenceNumber and 0xff),
+                            (timestamp shr 24), ((timestamp shr 16) and 0xff), ((timestamp shr 8) and 0xff), (timestamp and 0xff),
+                            0x03, 0x00, 0xd2, 0x00, //SSRC
+                        )
+                        firstPacket = false
+
+                        val ft = (encoderData[bufPos + 0].toUInt().toInt() shr 3) and 0xf
+                        val cmr = 2 // idk why, the capture I have uses cmr = 2 but ft = 7
+                        val f = 0
+                        val q = 1
+                        val firstByte = (cmr shl 4) or (f shl 3) or (ft shr 1)
+                        val secondByte = ( (ft and 1) shl 7) or (q shl 6) or (encoderData[bufPos + 1].toUInt().toInt() shr 2)
+
+                        val nextBytes = (1 until (frameSize - 1)).map { i ->
+                            // Take 2 bits left, 6 bits right
+                            val left = (encoderData[bufPos + i].toUByte().toUInt().toInt() and 0x3) shl 6
+                            val right = (encoderData[bufPos + i + 1].toUByte().toUInt().toInt() shr 2) and 0x3f
+                            left or right
+                        }
+                        // Need to know the size in **bits** to know whether we include the lastByte or not
+                        // Anyway in mode = 7 = 12.2KHz, we don't.
+                        //val lastByte = (encoderData[bufPos + frameSize - 1].toUByte().toUInt().toInt() and 0x3) shl 6
+
+                        val buf = (rtpHeader + firstByte + secondByte + nextBytes /*+ lastByte*/).map { it.toUByte() }.toUByteArray().toByteArray()
+                        //Rlog.d(TAG, "Sending buf of size ${buf.size}")
+
+                        val dgramPacket =
+                            DatagramPacket(buf, buf.size, call.rtpRemoteAddr, call.rtpRemotePort)
+                        call.rtpSocket.send(dgramPacket)
+
+                        sequenceNumber++
+                        bufPos += frameSize
+                    }
+                }
+            }
+            audioRecord.stop()
+            audioRecord.release()
+            encoder.stop()
+            encoder.release()
+        }
+    }
+
+    var currentCall: Call? = null
+    fun acceptCall() {
+        thread {
+
+            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
+            val evolvedContact =
+                """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting;+g.3gpp.ps2cs-srvcc-orig-pre-alerting"""
+
+            Rlog.d(TAG, "Accepting call")
+            val call = currentCall!!
+            val myHeaders = call.callHeaders
+            val myHeaders3 = myHeaders - "rseq" - "security-verify" + """
+                Session-Expires: 900;refresher=uas
+                P-Preferred-Identity: <$mySip>
+                Contact: $evolvedContact
+                Content-Type: application/sdp
+                """.toSipHeadersMap()
+
+            // Normally we shouldn't send again the SDP. With "precondition" feature flag, the SDP in 183 Session Progress (then updated in UPDATE) should be used instead
+            // But for some yet unknown reason, I need to do it (even though it contradicts my pcaps)
+            val msg3 =
+                SipResponse(
+                    statusCode = 200,
+                    statusString = "OK",
+                    headersParam = myHeaders3,
+                    body = call.sdp
+                )
+            Rlog.d(TAG, "Sending $msg3")
+            synchronized(socket.writer) { socket.writer.write(msg3.toByteArray()) }
+
+            callStarted.set(true)
+        }
+    }
+
+    fun rejectCall() {
+        thread {
+            val call = currentCall!!
+            val headers = call.callHeaders
+            val mySeqCounter = reliableSequenceCounter++
+            val myHeaders = headers + "RSeq: $mySeqCounter".toSipHeadersMap()
+            val msg =
+                SipResponse(
+                    statusCode = 486,
+                    statusString = "Busy Here",
+                    headersParam = myHeaders
+                )
+            Rlog.d(TAG, "Sending $msg")
+            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+            callStopped.set(true)
+            onCancelledCall?.invoke(Object(), "", emptyMap())
+        }
+    }
+
+    fun callDecodeThread() {
+        // Receiving thread
+        thread {
+            val d = File("/sdcard/Android/data/me.phh.ims/files/")
+            d.mkdirs()
+            val fo = FileOutputStream(File(d, "output.amr"))
+            fo.write("#!AMR\n".toByteArray())
+
+            val minBufferSize = AudioTrack.getMinBufferSize(8000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val audioTrack = AudioTrack(AudioManager.STREAM_VOICE_CALL, 8000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT, minBufferSize, AudioTrack.MODE_STREAM)
+            audioTrack.play()
+
+            val decoder = MediaCodec.createDecoderByType("audio/3gpp")
+            val mediaFormat = MediaFormat.createAudioFormat("audio/3gpp", 8000, 1)
+            decoder.configure(mediaFormat, null, null, 0)
+            decoder.start()
+
+            while(true) {
+                if(callStopped.get()) break
+                val dgramBuf = ByteArray(2048)
+                val dgram = DatagramPacket(dgramBuf, dgramBuf.size)
+                currentCall!!.rtpSocket.receive(dgram)
+
+                //TODO: Check RTP payload type
+
+                val ft = (dgramBuf[13].toUByte().toUInt() shr 7) or ((dgramBuf[12].toUByte().toUInt() and (7).toUInt()) shl 1)
+                Rlog.d(TAG, "Received RTP data is length ${dgram.length} ft is $ft")
+
+                if(ft.toInt() != 7) continue
+
+                // RTP header 12 byte
+                // AMR in RTP header 10 bits
+                // Packet size 32, FT=7
+                val baOs = ByteArrayOutputStream()
+
+                fo.write( ft.toInt() shl 3)
+                baOs.write( ft.toInt() shl 3)
+
+                var m = 0
+                // Warning: we should take good care counting the **bits** of the packet based on FT
+                for(i in 13 until dgram.length ) {
+                    // Take 6 bits left, 2 bits right
+                    val left = (dgramBuf[i].toUByte().toUInt().toInt() and 0x3f)  shl 2
+                    val right = (dgramBuf[i + 1 ].toUByte().toUInt().toInt() shr 6) and 0x3
+                    m++
+                    fo.write(left or right)
+                    baOs.write(left or right)
+                }
+                Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
+
+                val inBufIndex = decoder.dequeueInputBuffer(-1)
+                Rlog.d(TAG, "Got decoding input buffer $inBufIndex")
+                val inBuf = decoder.getInputBuffer(inBufIndex)!!
+                val data = baOs.toByteArray()
+                inBuf.clear()
+                inBuf.put(data)
+                decoder.queueInputBuffer(inBufIndex, 0, data.size, 0, 0)
+
+                //TODO: Support DTX (comfort noise frames that don't repeat)
+                val outBufInfo = MediaCodec.BufferInfo()
+                val outBufIndex = decoder.dequeueOutputBuffer(outBufInfo, 0)
+                Rlog.d(TAG, "Got decoding output buffer $outBufIndex")
+                if (outBufIndex >= 0) {
+                    val outBuf = decoder.getOutputBuffer(outBufIndex)!!
+                    audioTrack.write(outBuf, outBufInfo.size, AudioTrack.WRITE_BLOCKING)
+                    decoder.releaseOutputBuffer(outBufIndex, false)
+                }
+            }
+            audioTrack.stop()
+            audioTrack.release()
+            decoder.stop()
+            decoder.release()
+        }
+    }
+
     val callStopped = AtomicBoolean(false)
+    val callStarted = AtomicBoolean(false)
+    val updateReceived = AtomicBoolean(false)
+
+    val prAckWaitLock = Object()
+    var prAckWait = mutableSetOf<Int>()
     fun handleCall(request: SipRequest): Int {
         val contentType = request.headers["content-type"]!![0]
         if (contentType != "application/sdp") return 404
         callStopped.set(false)
+        callStarted.set(false)
 
         val f = request.headers["from"]
         val r = Regex(".*sip:([^@]*).*")
@@ -506,7 +881,7 @@ class SipHandler(val ctxt: Context) {
         // We'll have three states:
         // - 100 Trying (this will be done by returning 100 in this function)
         // - 183 Session Progress network-wise we're ready to receive data
-        // - 180 Ringing Notification's AudioTrack is playing, the user can hear its phone
+        // - 180 Ringing Notification's AudioTrack is playing, the user can hear its phone -- Note: Ringing doesn't give SDP
         // - 200 User has accepted the call
 
         val sdp = request.body.toString(Charsets.UTF_8).split("[\r\n]+".toRegex()).toList()
@@ -558,48 +933,20 @@ class SipHandler(val ctxt: Context) {
         val allTracks = listOf(amrTrack, dtmfTrack).sorted()
 
         thread {
+            // Need to sleep a bit so that our 100 Trying is sent first. Kinda weird.
             Thread.sleep(500)
             val rtpSocket = java.net.DatagramSocket(0, localAddr)
             network.bindSocket(rtpSocket)
             rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
-            thread {
 
-                val d = File("/sdcard/Android/data/me.phh.ims/files/")
-                d.mkdirs()
-                val fo = FileOutputStream(File(d, "output.amr"))
-                fo.write("#!AMR\n".toByteArray())
-                while(true) {
-                    val dgramBuf = ByteArray(2048)
-                    val dgram = DatagramPacket(dgramBuf, dgramBuf.size)
-                    rtpSocket.receive(dgram)
-                    val ft = (dgramBuf[13].toUByte().toUInt() shr 7) or ((dgramBuf[12].toUByte().toUInt() and (7).toUInt()) shl 1)
-                    Rlog.d(TAG, "Received RTP data is length ${dgram.length} ft is $ft")
-                    if(ft.toInt() != 7) continue
-
-                    // RTP header 12 byte
-                    // AMR in RTP header 10 bits
-                    // Packet size 32, FT=7
-                    fo.write( 7 shl 3)
-                    var m = 0
-                    // Warning: we should take good care counting the **bits** of the packet based on FT
-                    for(i in 13 until dgram.length ) {
-                        // Take 6 bits left, 2 bits right
-                        val left = (dgramBuf[i].toUByte().toUInt().toInt() and 0x3f)  shl 2
-                        val right = (dgramBuf[i + 1 ].toUByte().toUInt().toInt() shr 6) and 0x3
-                        m++
-                        fo.write(left or right)
-                    }
-                    //fo.write(dgramBuf, 12, dgram.length - 12)
-                    Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
-                }
-            }
+            callDecodeThread()
 
             val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
             val contactTel =
                 """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val mySeqCounter = reliableSequenceCounter++
-            val ipType = if(socket.localAddr is Inet6Address) "IP6" else "IP"
+            val ipType = if(socket.localAddr is Inet6Address) "IP6" else "IP4"
             val mySdp = """
 v=0
 o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
@@ -614,91 +961,68 @@ b=AS:38
 b=RS:0
 b=RR:0
 a=$amrTrackDesc
-a=$dtmfTrackDesc
 a=ptime:20
 a=maxptime:240
-a=fmtp:$amrTrack max-red=0
+a=$dtmfTrackDesc
+a=fmtp:$amrTrack mode-set=7;octet-align=0;max-red=0
 a=fmtp:$dtmfTrack 0-15
+a=curr:qos local none
+a=curr:qos remote none
+a=des:qos mandatory local sendrecv
+a=des:qos mandatory remote sendrecv
+a=conf:qos remote sendrecv
 a=sendrecv
                        """.trim().toByteArray()
 
-            val myHeaders = commonHeaders +
+            val myHeaders = commonHeaders + //Require: precondition
                 """
                         Contact: $contactTel
                         Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, INFO, MESSAGE, PRACK, OPTIONS
                         Content-Type: application/sdp
-                        Require: 100rel
+                        Require: 100rel, precondition
                         RSeq: $mySeqCounter
                         P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=20810b8c49752501
-                        """.toSipHeadersMap() + request.headers.filter { (k, _) ->
-                k in listOf("cseq", "via", "from", "to", "call-id")
-            }
+                        """.toSipHeadersMap() +
+                            request.headers.filter { (k, _) -> k in listOf("cseq", "via", "from", "to", "call-id") } -
+                "route" - "security-verify"
 
-            /*val msg =
+            currentCall = Call(
+                amrTrack = amrTrack,
+                amrTrackDesc = amrTrackDesc,
+                dtmfTrack = dtmfTrack,
+                dtmfTrackDesc = dtmfTrackDesc,
+                callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
+                rtpRemoteAddr = rtpRemoteAddr,
+                rtpRemotePort = rtpRemotePort.toInt(),
+                rtpSocket =  rtpSocket,
+                sdp = mySdp
+            )
+
+            synchronized(prAckWaitLock) {
+                prAckWait += mySeqCounter
+            }
+            val msg =
                 SipResponse(
                     statusCode = 183,
                     statusString = "Session Progress",
                     headersParam = myHeaders,
                     body = mySdp
                 )
-            // TODO: Verify we reuse PRACK for $mySeqCounter
             Rlog.d(TAG, "Sending $msg")
             synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+            waitPrack(mySeqCounter)
 
-            Thread.sleep(3000)
-            val mySeqCounter2 = reliableSequenceCounter++
-            val myHeaders2 = myHeaders + "RSeq: $mySeqCounter2".toSipHeadersMap()
+            /*val myHeaders2 = myHeaders - "rseq" - "content-type" - "require"
             val msg2 =
                 SipResponse(
                     statusCode = 180,
                     statusString = "Ringing",
-                    headersParam = myHeaders2,
-                    body = mySdp
+                    headersParam = myHeaders2
                 )
             Rlog.d(TAG, "Sending $msg2")
             synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }*/
 
-            Thread.sleep(3000)
-            val mySeqCounter3 = reliableSequenceCounter++
-            val myHeaders3 = myHeaders + "RSeq: $mySeqCounter3".toSipHeadersMap()
-            val msg3 =
-                SipResponse(
-                    statusCode = 200,
-                    statusString = "OK",
-                    headersParam = myHeaders3,
-                    body = mySdp
-                )
-            Rlog.d(TAG, "Sending $msg3")
-            synchronized(socket.writer) { socket.writer.write(msg3.toByteArray()) }
-
-            thread {
-                var sequenceNumber = 0
-                while(true) {
-                    if(callStopped.get()) break
-                    // Send a packet every 20ms
-                    Thread.sleep(20)
-                    // Every 20ms, at 8kHz, we have 160 samples
-                    val timestamp = sequenceNumber * 160
-                    val buf = listOf(
-                        // RTP
-                        0x80, //rtp version
-                        amrTrack, //payload type
-                        (sequenceNumber shr 8), (sequenceNumber and 0xff),
-                        (timestamp shr 24), ( (timestamp shr 16) and 0xff), ( (timestamp shr 8) and 0xff), (timestamp and 0xff),
-                        0x03, 0x00, 0xd2, 0x00, //SSRC
-
-                        // AMR
-                        //0x23, 0xc2, 0x15, 0x5b, 0x65, 0x11, 0x14, 0x40, 0x40, 0x00, 0x00, 0x1a, 0xa0, 0x00, 0x0, 0x00, 0x220, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                        //AMR comfort noise
-                        0x74, 0x4e, 0x79, 0x5c, 0x96, 0x77, 0x80
-                    ).map { it.toUByte() }.toUByteArray().toByteArray()
-                    val dgramPacket = DatagramPacket(buf, buf.size, rtpRemoteAddr, rtpRemotePort.toInt())
-                    rtpSocket.send(dgramPacket)
-
-                    sequenceNumber++
-
-                }
-            }
+            callEncodeThread()
         }
         return 100
     }

@@ -12,6 +12,7 @@ enum class SipMethod {
     BYE,
     OPTIONS,
     MESSAGE,
+    UPDATE,
     NOTIFY,
 }
 
@@ -324,6 +325,7 @@ fun SipReader.parseMessage(): SipMessage? {
         "BYE",
         "OPTIONS",
         "MESSAGE",
+        "UPDATE",
         "NOTIFY" ->
             return SipRequest(
                 method = SipMethod.valueOf(firstLineSplit[0]),

@@ -90,6 +90,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
             callProfile.setCallExtra(ImsCallProfile.EXTRA_OI, from)
             callProfile.setCallExtra(ImsCallProfile.EXTRA_DISPLAY_TEXT, "Bouyyaaa")
             notifyIncomingCall(object: ImsCallSessionImplBase() {
+                var mState = State.IDLE
                 override fun getCallProfile(): ImsCallProfile {
                     return callProfile
                 }
@@ -114,7 +115,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
                 }
 
                 override fun getState(): Int {
-                    return State.IDLE
+                    return mState
                 }
 
                 override fun start(callee: String, profile: ImsCallProfile) {
@@ -123,6 +124,18 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
 
                 override fun accept(callType: Int, profile: ImsStreamMediaProfile) {
                     Rlog.d(TAG, "Accepting call with profile $profile")
+                    sipHandler.acceptCall()
+                    mState = State.ESTABLISHED
+                    callListener?.callSessionInitiated(callProfile)
+                }
+
+                override fun deflect(deflectNumber: String?) {
+                    Rlog.d(TAG, "Deflecting call to $deflectNumber")
+                }
+
+                override fun reject(reason: Int) {
+                    sipHandler.rejectCall()
+                    Rlog.d(TAG, "Rejecting call $reason")
                 }
 
                 override fun terminate(reason: Int) {
