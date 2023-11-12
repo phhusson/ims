@@ -3,6 +3,7 @@ package me.phh.ims
 import android.os.Message
 import android.telephony.Rlog
 import android.telephony.ims.ImsCallProfile
+import android.telephony.ims.ImsStreamMediaProfile
 import android.telephony.ims.feature.ImsFeature
 import android.telephony.ims.feature.MmTelFeature
 import android.telephony.ims.stub.ImsCallSessionImplBase
@@ -10,6 +11,9 @@ import android.telephony.ims.stub.ImsMultiEndpointImplBase
 import android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_LTE
 import android.telephony.ims.stub.ImsSmsImplBase
 import android.telephony.ims.stub.ImsUtImplBase
+import android.os.Bundle
+import android.telephony.ims.ImsCallSessionListener
+import android.telephony.ims.ImsReasonInfo
 import me.phh.sip.SipHandler
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
@@ -78,6 +82,60 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
         imsSms.sipHandler = sipHandler
         sipHandler.onSmsReceived = imsSms::onSmsReceived
         sipHandler.onSmsStatusReportReceived = imsSms::onSmsStatusReportReceived
+
+        var callListener: ImsCallSessionListener? = null
+        sipHandler.onIncomingCall = { handle: Object, from: String, extras: Map<String, String> -> 
+            val callProfile = ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE)
+
+            callProfile.setCallExtra(ImsCallProfile.EXTRA_OI, from)
+            callProfile.setCallExtra(ImsCallProfile.EXTRA_DISPLAY_TEXT, "Bouyyaaa")
+            notifyIncomingCall(object: ImsCallSessionImplBase() {
+                override fun getCallProfile(): ImsCallProfile {
+                    return callProfile
+                }
+                override fun setListener(listener: ImsCallSessionListener) {
+                    Rlog.d(TAG, "Setting CallListener to $listener")
+                    callListener = listener
+                }
+
+                override fun getCallId(): String {
+                    return extras["call-id"]!!
+                }
+
+                override fun getLocalCallProfile(): ImsCallProfile {
+                    return callProfile
+                }
+                override fun getRemoteCallProfile(): ImsCallProfile {
+                    return callProfile
+                }
+                override fun getProperty(name: String): String {
+                    Rlog.d(TAG, "ImsCallSession.getProperty " + name)
+                    return ""
+                }
+
+                override fun getState(): Int {
+                    return State.IDLE
+                }
+
+                override fun start(callee: String, profile: ImsCallProfile) {
+                    Rlog.d(TAG, "Starting call with $callee")
+                }
+
+                override fun accept(callType: Int, profile: ImsStreamMediaProfile) {
+                    Rlog.d(TAG, "Accepting call with profile $profile")
+                }
+
+                override fun terminate(reason: Int) {
+                    Rlog.d(TAG, "Terminating call")
+                }
+
+            }, Bundle())
+        }
+        sipHandler.onCancelledCall = { param: Object, s: String, map: Map<String, String> ->
+            Rlog.d(TAG, "Cancelling call")
+            callListener?.callSessionTerminated(ImsReasonInfo(ImsReasonInfo.CODE_USER_TERMINATED_BY_REMOTE, 0, "Kikoo"))
+        }
+
         imsService.getRegistration(slotId).onRegistering(REGISTRATION_TECH_LTE)
         sipHandler.getVolteNetwork()
 
@@ -112,9 +170,8 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
     }
 
     fun shouldProcessCall(numbers: String): Int {
-        // can be used to route outgoing calls without MMS if desired, option?
-        // In that case return PORCESS_CALL_CSFB
+        // For the moment redirect all calls to 3G
         Rlog.d(TAG, "$slotId shouldProcessCall $numbers")
-        return 0 /* PROCESS_CALL_IMS */
+        return 1 /* PROCESS_CALL_CSFB */
     }
 }

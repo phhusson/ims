@@ -33,14 +33,14 @@ public class PhhMmTelFeatureProtected extends MmTelFeature {
 			capabilityChangeRequest.getCapabilitiesToEnable();
 		toEnable.forEach((pair) -> {
 			int cap = pair.getCapability();
-			Rlog.d(TAG, "Adding " + cap);
+			Rlog.d(TAG, "Adding " + cap + " to " + pair.getRadioTech());
 			this.capabilities |= cap;
 		});
 		List<CapabilityChangeRequest.CapabilityPair> toDisable =
 			capabilityChangeRequest.getCapabilitiesToDisable();
 		toDisable.forEach((pair) -> {
 			int cap = pair.getCapability();
-			Rlog.d(TAG, "Removing " + cap);
+			Rlog.d(TAG, "Removing " + cap + " to " + pair.getRadioTech());
 			this.capabilities &= ~cap;
 		});
 		Rlog.d(TAG, "Final capabilities: " + this.capabilities);

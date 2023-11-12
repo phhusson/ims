@@ -12,17 +12,18 @@ import android.telephony.Rlog
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.InetAddress
 import java.net.SocketException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.*
+import java.net.Inet6Address
+import java.util.concurrent.atomic.AtomicBoolean
 
 private data class smsHeaders(
     val dest: String,
@@ -69,6 +70,7 @@ class SipHandler(val ctxt: Context) {
     private var commonHeaders = "".toSipHeadersMap()
     private var contact = ""
     private var mySip = ""
+    private var myTel = ""
 
     // too many lateinit, bad separation?
     lateinit private var localAddr: InetAddress
@@ -85,6 +87,8 @@ class SipHandler(val ctxt: Context) {
     lateinit private var socket: SipConnectionTcp
     lateinit private var serverSocket: SipConnectionTcpServer
     lateinit private var serverSocketUdp: SipConnectionUdp
+    //private var rtpSocket: RtpConnection
+    private var reliableSequenceCounter = 67
 
     private val cbLock = ReentrantLock()
     private var requestCallbacks: Map<SipMethod, ((SipRequest) -> Int)> = mapOf()
@@ -94,6 +98,8 @@ class SipHandler(val ctxt: Context) {
     var imsFailureCallback: (() -> Unit)? = null
     var onSmsReceived: ((Int, String, ByteArray) -> Unit)? = null
     var onSmsStatusReportReceived: ((Int, String, ByteArray) -> Unit)? = null
+    var onIncomingCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? = null
+    var onCancelledCall: ((handle: Object, from: String, extras: Map<String, String>) -> Unit)? = null
     private val smsLock = ReentrantLock()
     private var smsToken = 0
     private val smsHeadersMap = mutableMapOf<Int, smsHeaders>()
@@ -117,7 +123,7 @@ class SipHandler(val ctxt: Context) {
                 }
                 throw e
             }
-        Rlog.d(TAG, "Received message $msg")
+        Rlog.d(TAG, "RObject() message $msg")
         if (msg is SipResponse) {
             return handleResponse(msg)
         }
@@ -136,7 +142,7 @@ class SipHandler(val ctxt: Context) {
         val reply =
             SipResponse(
                 statusCode = status,
-                statusString = if (status == 200) "OK" else "ERROR",
+                statusString = if (status == 200) "OK" else if (status == 100) "Trying" else "ERROR",
                 headersParam =
                     msg.headers.filter { (k, _) ->
                         k in listOf("cseq", "via", "from", "to", "call-id")
@@ -180,6 +186,8 @@ class SipHandler(val ctxt: Context) {
 
         localAddr = lp.linkAddresses[0].address
         pcscfAddr = pcscf
+
+        Rlog.w(TAG, "Connecting with address $localAddr to $pcscfAddr")
 
         clientSpiC = ipSecManager.allocateSecurityParameterIndex(localAddr)
         clientSpiS = ipSecManager.allocateSecurityParameterIndex(localAddr, clientSpiC.spi + 1)
@@ -280,6 +288,10 @@ class SipHandler(val ctxt: Context) {
 
         setResponseCallback(registerHeaders["call-id"]!![0], ::registerCallback)
         setRequestCallback(SipMethod.MESSAGE, ::handleSms)
+        setRequestCallback(SipMethod.INVITE, ::handleCall)
+        setRequestCallback(SipMethod.PRACK, ::handlePrack)
+        setRequestCallback(SipMethod.CANCEL, ::handleCancel)
+        setRequestCallback(SipMethod.BYE, ::handleCancel)
         handleResponse(regReply)
 
         // two ways we'll get incoming messages:
@@ -400,15 +412,20 @@ class SipHandler(val ctxt: Context) {
         // on failure just abort thread, ims will restart
         require(response.statusCode == 200)
 
+        val r =  Regex("lr;[^>]*")
         val route =
             (response.headers.getOrDefault("service-route", emptyList()) +
                     response.headers.getOrDefault("path", emptyList()))
                 .toSet() // remove duplicates
                 .toList()
+                .map {
+                    r.replace(it, "lr")
+                }
 
         val associatedUri =
             response.headers["p-associated-uri"]!!.map { it.trimStart('<').trimEnd('>').split(':') }
         mySip = "sip:" + associatedUri.first { it[0] == "sip" }[1]
+        myTel = associatedUri.first { it[0] == "tel" }[1]
         commonHeaders +=
             mapOf(
                 "route" to route,
@@ -422,20 +439,26 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun subscribe() {
+        val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+        val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+        val contactTel =
+            """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val msg =
             SipRequest(
                 SipMethod.SUBSCRIBE,
                 "$mySip",
                 commonHeaders +
                     """
-                    Contact: $contact
+                    Contact: $contactTel
                     P-Preferred-Identity: <$mySip>
                     Event: reg
                     Expires: 600000
                     Supported: sec-agree
                     Require: sec-agree
                     Proxy-Require: sec-agree
-                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, INFO, MESSAGE, PRACK, OPTIONS
+                    Accept: application/reginfo+xml
+                    P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=20810b8c49752501
                     """.toSipHeadersMap()
             )
         if (!imsReady) {
@@ -453,6 +476,231 @@ class SipHandler(val ctxt: Context) {
         imsReadyCallback?.invoke()
         imsReady = true
         return true
+    }
+
+    fun handlePrack(request: SipRequest): Int {
+        Rlog.d(TAG, "Received PRACK for ${request.headers["rack"]!![0]}")
+        return 200
+    }
+
+    fun handleCancel(request: SipRequest): Int {
+        callStopped.set(true)
+        Rlog.d(TAG, "Cancelled call ${request.headers["call-id"]!![0]}")
+        // We're supposed to add an additional answer SIP/2.0 487 Request Terminated
+        onCancelledCall?.invoke(Object(), "", emptyMap())
+        return 200
+    }
+
+    val callStopped = AtomicBoolean(false)
+    fun handleCall(request: SipRequest): Int {
+        val contentType = request.headers["content-type"]!![0]
+        if (contentType != "application/sdp") return 404
+        callStopped.set(false)
+
+        val f = request.headers["from"]
+        val r = Regex(".*sip:([^@]*).*")
+        val m = r.find(f!![0]!!)!!.groups[1]!!.value
+        Rlog.d(TAG, "Incoming call from $m")
+        onIncomingCall?.invoke(Object(), m, mapOf("call-id" to request.headers["call-id"]!![0]))
+
+        // We'll have three states:
+        // - 100 Trying (this will be done by returning 100 in this function)
+        // - 183 Session Progress network-wise we're ready to receive data
+        // - 180 Ringing Notification's AudioTrack is playing, the user can hear its phone
+        // - 200 User has accepted the call
+
+        val sdp = request.body.toString(Charsets.UTF_8).split("[\r\n]+".toRegex()).toList()
+        Rlog.d(TAG, "Split SDP into $sdp")
+        fun sdpElement(command: String): String? {
+            val v = sdp.firstOrNull { it.startsWith("$command=")} ?: return null
+            return v.substring(2)
+        }
+        val sdpConnectionData = sdpElement("c")
+        val sdpOrigin = sdpElement("o")
+        val sdpSessionName = sdpElement("s")
+        val sdpTiming = sdpElement("t")
+        val sdpBandwidth = sdpElement("b")
+        val sdpMedia = sdpElement("m")
+
+        Rlog.d(TAG, "Got sdpTiming $sdpTiming")
+
+        if (sdpTiming != "0 0")
+            Rlog.d(TAG, "Uh-oh, unknown timing mode")
+
+
+        val rtpRemote = sdpConnectionData!!.split(" ")[2] //c=IN IP6 xxx
+        val rtpRemoteAddr = InetAddress.getByName(rtpRemote)
+        val rtpRemotePort = sdpMedia!!.split(" ")[1] //m=audio 30798 RTP/AVP 96 97 98 8 18 101 100 99
+
+        val attributes = sdp.filter { it.startsWith("a=") }.map { it.substring(2)}
+
+        fun lookTrackMatching(codec: String): Pair<Int,String>? {
+            //TODO: also match on fmtp
+            val maps = attributes.filter { it.startsWith("rtpmap") && it.contains(codec) }
+            if (maps.isEmpty()) return null
+            val track = maps[0].split("[: ]+".toRegex())[1].toInt()
+            val desc = maps[0]
+            return Pair(track, desc)
+        }
+
+        fun trackRequirements(track: Int): String? {
+            return attributes.firstOrNull() { it.startsWith("fmtp:$track") }
+        }
+
+        // Look for an AMR/8000 mode
+        // TODO: Select which one? SFR has two, one with mode-set=7 one without it. This would require reading the fmtp lines
+        val (amrTrack, amrTrackDesc) = lookTrackMatching("AMR/8000")!!
+        val amrTrackRequirements = trackRequirements(amrTrack)
+
+        // Look for a DTMF track, use the 8000Hz-based one to match AMR timestamps
+        val (dtmfTrack, dtmfTrackDesc) = lookTrackMatching("telephone-event/8000")!!
+
+        val allTracks = listOf(amrTrack, dtmfTrack).sorted()
+
+        thread {
+            Thread.sleep(500)
+            val rtpSocket = java.net.DatagramSocket(0, localAddr)
+            network.bindSocket(rtpSocket)
+            rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
+            thread {
+
+                val d = File("/sdcard/Android/data/me.phh.ims/files/")
+                d.mkdirs()
+                val fo = FileOutputStream(File(d, "output.amr"))
+                fo.write("#!AMR\n".toByteArray())
+                while(true) {
+                    val dgramBuf = ByteArray(2048)
+                    val dgram = DatagramPacket(dgramBuf, dgramBuf.size)
+                    rtpSocket.receive(dgram)
+                    val ft = (dgramBuf[13].toUByte().toUInt() shr 7) or ((dgramBuf[12].toUByte().toUInt() and (7).toUInt()) shl 1)
+                    Rlog.d(TAG, "Received RTP data is length ${dgram.length} ft is $ft")
+                    if(ft.toInt() != 7) continue
+
+                    // RTP header 12 byte
+                    // AMR in RTP header 10 bits
+                    // Packet size 32, FT=7
+                    fo.write( 7 shl 3)
+                    var m = 0
+                    // Warning: we should take good care counting the **bits** of the packet based on FT
+                    for(i in 13 until dgram.length ) {
+                        // Take 6 bits left, 2 bits right
+                        val left = (dgramBuf[i].toUByte().toUInt().toInt() and 0x3f)  shl 2
+                        val right = (dgramBuf[i + 1 ].toUByte().toUInt().toInt() shr 6) and 0x3
+                        m++
+                        fo.write(left or right)
+                    }
+                    //fo.write(dgramBuf, 12, dgram.length - 12)
+                    Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
+                }
+            }
+
+            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+            val contactTel =
+                """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
+            val mySeqCounter = reliableSequenceCounter++
+            val ipType = if(socket.localAddr is Inet6Address) "IP6" else "IP"
+            val mySdp = """
+v=0
+o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+s=phh voice call
+c=IN $ipType ${socket.localAddr.hostAddress}
+b=AS:38
+b=RS:0
+b=RR:0
+t=0 0
+m=audio ${rtpSocket.localPort} RTP/AVP ${allTracks.joinToString(" ")}
+b=AS:38
+b=RS:0
+b=RR:0
+a=$amrTrackDesc
+a=$dtmfTrackDesc
+a=ptime:20
+a=maxptime:240
+a=fmtp:$amrTrack max-red=0
+a=fmtp:$dtmfTrack 0-15
+a=sendrecv
+                       """.trim().toByteArray()
+
+            val myHeaders = commonHeaders +
+                """
+                        Contact: $contactTel
+                        Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, INFO, MESSAGE, PRACK, OPTIONS
+                        Content-Type: application/sdp
+                        Require: 100rel
+                        RSeq: $mySeqCounter
+                        P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=20810b8c49752501
+                        """.toSipHeadersMap() + request.headers.filter { (k, _) ->
+                k in listOf("cseq", "via", "from", "to", "call-id")
+            }
+
+            /*val msg =
+                SipResponse(
+                    statusCode = 183,
+                    statusString = "Session Progress",
+                    headersParam = myHeaders,
+                    body = mySdp
+                )
+            // TODO: Verify we reuse PRACK for $mySeqCounter
+            Rlog.d(TAG, "Sending $msg")
+            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+
+            Thread.sleep(3000)
+            val mySeqCounter2 = reliableSequenceCounter++
+            val myHeaders2 = myHeaders + "RSeq: $mySeqCounter2".toSipHeadersMap()
+            val msg2 =
+                SipResponse(
+                    statusCode = 180,
+                    statusString = "Ringing",
+                    headersParam = myHeaders2,
+                    body = mySdp
+                )
+            Rlog.d(TAG, "Sending $msg2")
+            synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }*/
+
+            Thread.sleep(3000)
+            val mySeqCounter3 = reliableSequenceCounter++
+            val myHeaders3 = myHeaders + "RSeq: $mySeqCounter3".toSipHeadersMap()
+            val msg3 =
+                SipResponse(
+                    statusCode = 200,
+                    statusString = "OK",
+                    headersParam = myHeaders3,
+                    body = mySdp
+                )
+            Rlog.d(TAG, "Sending $msg3")
+            synchronized(socket.writer) { socket.writer.write(msg3.toByteArray()) }
+
+            thread {
+                var sequenceNumber = 0
+                while(true) {
+                    if(callStopped.get()) break
+                    // Send a packet every 20ms
+                    Thread.sleep(20)
+                    // Every 20ms, at 8kHz, we have 160 samples
+                    val timestamp = sequenceNumber * 160
+                    val buf = listOf(
+                        // RTP
+                        0x80, //rtp version
+                        amrTrack, //payload type
+                        (sequenceNumber shr 8), (sequenceNumber and 0xff),
+                        (timestamp shr 24), ( (timestamp shr 16) and 0xff), ( (timestamp shr 8) and 0xff), (timestamp and 0xff),
+                        0x03, 0x00, 0xd2, 0x00, //SSRC
+
+                        // AMR
+                        //0x23, 0xc2, 0x15, 0x5b, 0x65, 0x11, 0x14, 0x40, 0x40, 0x00, 0x00, 0x1a, 0xa0, 0x00, 0x0, 0x00, 0x220, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                        //AMR comfort noise
+                        0x74, 0x4e, 0x79, 0x5c, 0x96, 0x77, 0x80
+                    ).map { it.toUByte() }.toUByteArray().toByteArray()
+                    val dgramPacket = DatagramPacket(buf, buf.size, rtpRemoteAddr, rtpRemotePort.toInt())
+                    rtpSocket.send(dgramPacket)
+
+                    sequenceNumber++
+
+                }
+            }
+        }
+        return 100
     }
 
     fun handleSms(request: SipRequest): Int {
