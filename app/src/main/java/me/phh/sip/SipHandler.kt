@@ -1069,9 +1069,13 @@ a=sendrecv
         successCb: (() -> Unit),
         failCb: (() -> Unit)
     ) {
+        val decodableSmsc = try {
+            PhoneNumberUtils.numberToCalledPartyBCD(smsSmsc, PhoneNumberUtils.BCD_EXTENDED_TYPE_CALLED_PARTY); true
+        } catch (t:Throwable) { false }
+
         // make ref up?
         val smsc =
-            if (smsSmsc != null) smsSmsc
+            if (smsSmsc != null && decodableSmsc) smsSmsc
             else {
                 val smsManager =
                     ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
