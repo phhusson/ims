@@ -3,34 +3,22 @@ package me.phh.sip
 import android.annotation.SuppressLint
 import android.content.Context
 import android.media.*
-import android.media.audiofx.AudioEffect
-import android.media.audiofx.AutomaticGainControl
-import android.net.ConnectivityManager
-import android.net.IpSecAlgorithm
-import android.net.IpSecManager
-import android.net.IpSecTransform
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
+import android.net.*
+import android.telephony.PhoneNumberUtils
 import android.telephony.Rlog
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
-import java.net.DatagramPacket
-import java.net.InetAddress
-import java.net.SocketException
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
-import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.*
-import java.net.DatagramSocket
-import java.net.Inet6Address
+import java.net.*
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.sqrt
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 
 private data class smsHeaders(
     val dest: String,
@@ -54,6 +42,7 @@ class SipHandler(val ctxt: Context) {
         ipSecManager = ctxt.getSystemService(IpSecManager::class.java)
     }
 
+    @SuppressLint("MissingPermission")
     private val activeSubscription = subscriptionManager.activeSubscriptionInfoList[0]
     private val imei = telephonyManager.getDeviceId(activeSubscription.simSlotIndex)
     private val subId = activeSubscription.subscriptionId
@@ -67,13 +56,16 @@ class SipHandler(val ctxt: Context) {
     private var akaDigest =
         """Digest username="$user",realm="$realm",nonce="",uri="sip:$realm",response="",algorithm=AKAv1-MD5"""
 
+    fun generateCallId(): SipHeadersMap {
+        val callId = randomBytes(12).toHex()
+        return mapOf("call-id" to listOf(callId))
+    }
     private var registerCounter = 1
     private var registerHeaders =
         """
         From: <sip:$user>
         To: <sip:$user>
-        Call-ID: ${randomBytes(12).toHex()}
-        """.toSipHeadersMap()
+        """.toSipHeadersMap() + generateCallId()
     private var commonHeaders = "".toSipHeadersMap()
     private var contact = ""
     private var mySip = ""
@@ -83,10 +75,13 @@ class SipHandler(val ctxt: Context) {
     lateinit private var localAddr: InetAddress
     lateinit private var pcscfAddr: InetAddress
 
-    lateinit private var clientSpiC: IpSecManager.SecurityParameterIndex
-    lateinit private var clientSpiS: IpSecManager.SecurityParameterIndex
-    lateinit private var serverSpiC: IpSecManager.SecurityParameterIndex
-    lateinit private var serverSpiS: IpSecManager.SecurityParameterIndex
+    data class SipIpsecSettings(
+        val clientSpiC: IpSecManager.SecurityParameterIndex,
+        val clientSpiS: IpSecManager.SecurityParameterIndex,
+        val serverSpiC: IpSecManager.SecurityParameterIndex,
+        val serverSpiS: IpSecManager.SecurityParameterIndex,
+    )
+    lateinit var ipsecSettings: SipIpsecSettings
 
     lateinit private var network: Network
 
@@ -257,11 +252,16 @@ class SipHandler(val ctxt: Context) {
         val portS = securityServerParams["port-s"]!!.toInt()
         // spi string is 32 bit unsigned, but ipSecManager wants an int...
         val spiS = securityServerParams["spi-s"]!!.toUInt().toInt()
-        serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
+        val serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
 
-        // val portC = securityServerParams["port-c"]!!.toInt()
         val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
-        serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
+        val serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
+
+        ipsecSettings = SipIpsecSettings(
+            clientSpiS = clientSpiS,
+            clientSpiC = clientSpiC,
+            serverSpiC = serverSpiC,
+            serverSpiS = serverSpiS)
 
         val ealg = securityServerParams["ealg"] ?: "null"
         val (alg, hmac_key) = if (securityServerParams["alg"] == "hmac-sha-1-96") {
