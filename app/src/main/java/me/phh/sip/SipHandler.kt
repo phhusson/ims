@@ -78,8 +78,8 @@ class SipHandler(val ctxt: Context) {
     data class SipIpsecSettings(
         val clientSpiC: IpSecManager.SecurityParameterIndex,
         val clientSpiS: IpSecManager.SecurityParameterIndex,
-        val serverSpiC: IpSecManager.SecurityParameterIndex,
-        val serverSpiS: IpSecManager.SecurityParameterIndex,
+        val serverSpiC: IpSecManager.SecurityParameterIndex? = null,
+        val serverSpiS: IpSecManager.SecurityParameterIndex? = null,
     )
     lateinit var ipsecSettings: SipIpsecSettings
 
@@ -194,8 +194,11 @@ class SipHandler(val ctxt: Context) {
 
         Rlog.w(TAG, "Connecting with address $localAddr to $pcscfAddr")
 
-        clientSpiC = ipSecManager.allocateSecurityParameterIndex(localAddr)
-        clientSpiS = ipSecManager.allocateSecurityParameterIndex(localAddr, clientSpiC.spi + 1)
+        val clientSpiC = ipSecManager.allocateSecurityParameterIndex(localAddr)
+        val clientSpiS = ipSecManager.allocateSecurityParameterIndex(localAddr, clientSpiC.spi + 1)
+        ipsecSettings = SipIpsecSettings(
+            clientSpiS = clientSpiS,
+            clientSpiC = clientSpiC)
 
         plainSocket = SipConnectionTcp(network, pcscfAddr, localAddr)
         plainSocket.connect(5060)
