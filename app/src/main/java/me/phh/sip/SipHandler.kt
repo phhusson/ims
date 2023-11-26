@@ -178,16 +178,24 @@ class SipHandler(val ctxt: Context) {
         return true
     }
 
+    var abandonnedBecauseOfNoPcscf = false
     fun connect() {
+        abandonnedBecauseOfNoPcscf = false
         Rlog.d(TAG, "Trying to connect to SIP server")
         val lp = connectivityManager.getLinkProperties(network)
-        val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<InetAddress>
-        if (pcscfs.size == 0) {
+        Rlog.d(TAG, "Got link properties $lp")
+        val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<*>
+        val pcscf = if (pcscfs.isNotEmpty()) {
+            pcscfs[0] as InetAddress
+        } else {
             Rlog.w(TAG, "Had no Pcscf Sever defined, aborting")
-            imsFailureCallback?.invoke()
+            val t = try { InetAddress.getByName("ims.mnc${mnc}.mcc${mcc}.pub.3gppnetwork.org") } catch(t: Throwable) { null }
+            val t2 = try { InetAddress.getByName("ims.mnc${mnc}.mcc${mcc}.3gppnetwork.org") } catch(t: Throwable) { null }
+            Rlog.d(TAG, "Resolved $t and $t2")
+            //imsFailureCallback?.invoke()
+            abandonnedBecauseOfNoPcscf = true
             return
         }
-        val pcscf = pcscfs[0]
 
         localAddr = lp.linkAddresses[0].address
         pcscfAddr = pcscf
@@ -359,10 +367,49 @@ class SipHandler(val ctxt: Context) {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
                 .build(),
             object : ConnectivityManager.NetworkCallback() {
+                override fun onUnavailable() {
+                    Rlog.d(TAG, "IMS network unavailable")
+                }
+
+                override fun onLost(network: Network) {
+                    Rlog.d(TAG, "IMS network lost")
+                }
+
+                override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                    Rlog.d(TAG, "IMS network blocked status changed $blocked")
+                }
+
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities: NetworkCapabilities
+                ) {
+                    Rlog.d(TAG, "IMS network capabilities changed $networkCapabilities")
+                }
+
+                override fun onLosing(network: Network, maxMsToLive: Int) {
+                    Rlog.d(TAG, "IMS network losing")
+                }
+
+                override fun onLinkPropertiesChanged(
+                    _network: Network,
+                    linkProperties: LinkProperties
+                ) {
+                    Rlog.d(TAG, "IMS network link properties changed $linkProperties")
+                    val pcscfs = linkProperties!!.javaClass.getMethod("getPcscfServers").invoke(linkProperties) as List<*>
+                    Rlog.d(TAG, "Got pcscfs $pcscfs")
+                    if(pcscfs.isNotEmpty() && abandonnedBecauseOfNoPcscf) {
+                        connect()
+                    }
+                }
+
                 override fun onAvailable(_network: Network) {
                     Rlog.d(TAG, "Got IMS network.")
-                    network = _network
-                    connect()
+                    if (!this@SipHandler::network.isInitialized) {
+                        network = _network
+                        connect()
+                    } else {
+                        Rlog.d(TAG, "... don't try anything")
+                    }
                 }
             }
         )
