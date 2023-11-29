@@ -923,8 +923,8 @@ a=sendrecv
         callStarted.set(false)
 
         val f = request.headers["from"]
-        val r = Regex(".*sip:([^@]*).*")
-        val m = r.find(f!![0]!!)!!.groups[1]!!.value
+        val r = Regex(".*(sip|tel):([^@]*).*")
+        val m = r.find(f!![0]!!)!!.groups[2]!!.value
         Rlog.d(TAG, "Incoming call from $m")
         onIncomingCall?.invoke(Object(), m, mapOf("call-id" to request.headers["call-id"]!![0]))
 
