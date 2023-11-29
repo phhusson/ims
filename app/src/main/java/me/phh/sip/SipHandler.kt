@@ -959,13 +959,26 @@ a=sendrecv
 
         val attributes = sdp.filter { it.startsWith("a=") }.map { it.substring(2)}
 
-        fun lookTrackMatching(codec: String): Pair<Int,String>? {
+        fun lookTrackMatching(codec: String, additional: String = "", notAdditional: String = ""): Pair<Int,String>? {
             //TODO: also match on fmtp
             val maps = attributes.filter { it.startsWith("rtpmap") && it.contains(codec) }
-            if (maps.isEmpty()) return null
-            val track = maps[0].split("[: ]+".toRegex())[1].toInt()
-            val desc = maps[0]
-            return Pair(track, desc)
+            val matches = maps.map { m ->
+                val track = maps[0].split("[: ]+".toRegex())[1].toInt()
+                val desc = maps[0]
+                Pair(track, desc)
+            }
+            val matches2 = if(matches.size > 1) {
+                matches.flatMap { m ->
+                    val fmtp = attributes.filter { it.startsWith("fmtp:") }[0]
+                    if(fmtp.contains(additional) && (notAdditional.isEmpty() || !fmtp.contains(notAdditional)))
+                        listOf(m)
+                    else
+                        emptyList()
+                }
+            } else {
+                matches
+            }
+            return matches2.firstOrNull()
         }
 
         fun trackRequirements(track: Int): String? {
@@ -974,7 +987,7 @@ a=sendrecv
 
         // Look for an AMR/8000 mode
         // TODO: Select which one? SFR has two, one with mode-set=7 one without it. This would require reading the fmtp lines
-        val (amrTrack, amrTrackDesc) = lookTrackMatching("AMR/8000")!!
+        val (amrTrack, amrTrackDesc) = lookTrackMatching("AMR/8000", "octet-align=0", "octet-align=1")!!
         val amrTrackRequirements = trackRequirements(amrTrack)
 
         // Look for a DTMF track, use the 8000Hz-based one to match AMR timestamps
