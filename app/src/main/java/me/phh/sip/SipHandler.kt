@@ -184,7 +184,7 @@ class SipHandler(val ctxt: Context) {
         Rlog.d(TAG, "Trying to connect to SIP server")
         val lp = connectivityManager.getLinkProperties(network)
         Rlog.d(TAG, "Got link properties $lp")
-        val pcscfs = lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<*>
+        val pcscfs = (lp!!.javaClass.getMethod("getPcscfServers").invoke(lp) as List<*>).sortedBy { if(it is Inet6Address) 0 else 1 }
         val pcscf = if (pcscfs.isNotEmpty()) {
             pcscfs[0] as InetAddress
         } else {
@@ -197,7 +197,7 @@ class SipHandler(val ctxt: Context) {
             return
         }
 
-        localAddr = lp.linkAddresses[0].address
+        localAddr = lp.linkAddresses.map { it.address }.sortedBy { if(it is Inet6Address) 0 else 1 }.first()
         pcscfAddr = pcscf
 
         Rlog.w(TAG, "Connecting with address $localAddr to $pcscfAddr")
