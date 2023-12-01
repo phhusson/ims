@@ -963,21 +963,26 @@ a=sendrecv
             //TODO: also match on fmtp
             val maps = attributes.filter { it.startsWith("rtpmap") && it.contains(codec) }
             val matches = maps.map { m ->
-                val track = maps[0].split("[: ]+".toRegex())[1].toInt()
-                val desc = maps[0]
+                val track = m.split("[: ]+".toRegex())[1].toInt()
+                val desc = m
                 Pair(track, desc)
             }
+            Rlog.d(TAG, "Matching $codec, got $matches")
             val matches2 = if(matches.size > 1) {
-                matches.flatMap { m ->
-                    val fmtp = attributes.filter { it.startsWith("fmtp:") }[0]
-                    if(fmtp.contains(additional) && (notAdditional.isEmpty() || !fmtp.contains(notAdditional)))
-                        listOf(m)
+                matches.sortedBy { m ->
+                    val fmtp = attributes.filter { it.startsWith("fmtp:${m.first}") }[0]
+                    Rlog.d(TAG, "Matching $codec, for match $m got fmtp $fmtp")
+                    if(fmtp.contains(additional))
+                        0
+                    else if (notAdditional.isNotEmpty() && !fmtp.contains(notAdditional))
+                        1
                     else
-                        emptyList()
+                        2
                 }
             } else {
                 matches
             }
+            Rlog.d(TAG, "Matching2 $codec, got $matches2")
             return matches2.firstOrNull()
         }
 
