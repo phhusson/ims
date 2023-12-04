@@ -15,6 +15,8 @@ import android.os.Bundle
 import android.telephony.ims.ImsCallSessionListener
 import android.telephony.ims.ImsReasonInfo
 import me.phh.sip.SipHandler
+import me.phh.sip.randomBytes
+import me.phh.sip.toHex
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
 // We extend it through java once because kotlin cannot override
@@ -38,7 +40,48 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
     }
     override fun createCallSession(profile: ImsCallProfile): ImsCallSessionImplBase {
         Rlog.d(TAG, "$slotId createCallSession")
-        return ImsCallSessionImplBase()
+        return object: ImsCallSessionImplBase() {
+            private val mCallId = randomBytes(12).toHex()
+            lateinit var mListener: ImsCallSessionListener
+            override fun getCallId(): String {
+                return mCallId
+            }
+
+            override fun close() {
+                Rlog.d(TAG, "Closing call")
+            }
+
+            override fun accept(callType: Int, profile: ImsStreamMediaProfile) {
+                Rlog.d(TAG, "Accepting call with callType $callType profile $profile")
+            }
+
+            override fun isInCall(): Boolean {
+                return true
+            }
+
+            override fun start(callee: String, profile: ImsCallProfile) {
+                Rlog.d(TAG, "Starting call with $callee profile $profile")
+                sipHandler.call(callee)
+            }
+
+            override fun getState(): Int {
+                return State.ESTABLISHED
+            }
+
+            override fun setListener(listener: ImsCallSessionListener) {
+                Rlog.d(TAG, "Setting CallListener to $listener")
+                mListener = listener
+            }
+
+            override fun reject(reason: Int) {
+                Rlog.d(TAG, "Rejecting call with reason $reason")
+            }
+
+            override fun terminate(reason: Int) {
+                Rlog.d(TAG, "Terminating call with reason $reason")
+                mListener.callSessionTerminated(ImsReasonInfo(ImsReasonInfo.CODE_USER_TERMINATED, 0, "Kikoo"))
+            }
+        }
     }
 
     fun getInstance(slotId: Int): PhhMmTelFeature {
@@ -160,16 +203,15 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
     // ints are @MmTelCapabilities.MmTelCapability and @ImsRegistrationImplBase.ImsRegistrationTech
     override fun queryCapabilityConfiguration(capability: Int, radioTech: Int): Boolean {
         Rlog.d(TAG, "$slotId queryCapabilityConfiguration $capability $radioTech")
-        return capability == MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_SMS
+        return capability == MmTelCapabilities.CAPABILITY_TYPE_SMS || capability == MmTelCapabilities.CAPABILITY_TYPE_VOICE
     }
 
     override fun setUiTtyMode(mode: Int, onCompleteMessage: Message?) {
         Rlog.d(TAG, "$slotId setUiTtyMode $onCompleteMessage")
     }
 
-    fun shouldProcessCall(numbers: String): Int {
-        // For the moment redirect all calls to 3G
-        Rlog.d(TAG, "$slotId shouldProcessCall $numbers")
-        return 1 /* PROCESS_CALL_CSFB */
+    override fun shouldProcessCall(numbers: Array<out String>): Int {
+        Rlog.d(TAG, "Should process call? ${numbers.toList()}")
+        return PROCESS_CALL_IMS
     }
 }

@@ -809,6 +809,116 @@ a=sendrecv
         }
     }
 
+    fun call(phoneNumber: String) {
+        thread {
+
+            val rtpSocket = DatagramSocket(0, localAddr)
+            network.bindSocket(rtpSocket)
+            //rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
+
+
+            val amrTrack = 97
+            val amrTrackDesc = "fmtp:97 mode-change-capability=2;octet-align=0;max-red=0"
+            val dtmfTrack = 100
+            val dtmfTrackDesc = "fmtp:100 0-15"
+            val allTracks = listOf(amrTrack,dtmfTrack).sorted()
+
+            val ipType = if(localAddr is Inet6Address) "IP6" else "IP4"
+
+            val sdp = """
+v=0
+o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+s=phh voice call
+c=IN $ipType ${socket.localAddr.hostAddress}
+b=AS:38
+b=RS:0
+b=RR:0
+t=0 0
+m=audio ${rtpSocket.localPort} RTP/AVP ${allTracks.joinToString(" ")}
+b=AS:38
+b=RS:0
+b=RR:0
+a=ptime:20
+a=maxptime:240
+a=rtpmap:$amrTrack AMR/8000/1
+a=rtpmap:$dtmfTrack telephone-event/8000
+a=fmtp:$amrTrack mode-change-capability=2;octet-aling=0;max-red=0
+a=fmtp:$dtmfTrack 0-15
+a=curr:qos local none
+a=curr:qos remote none
+a=des:qos mandatory local sendrecv
+a=des:qos mandatory remote sendrecv
+a=conf:qos remote sendrecv
+a=sendrecv
+                       """.trim().toByteArray()
+
+            val to = "tel:$phoneNumber;phone-context=ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
+            val myHeaders = commonHeaders +
+                """
+                    From: <$mySip>
+                    To: <$to>
+                    P-Preferred-Identity: <$mySip>
+                    P-Asserted-Identity: <$mySip>
+                    Expires: 600000
+                    Require: sec-agree
+                    Proxy-Require: sec-agree
+                    Allow: INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, PRACK, OPTIONS
+                    P-Early-Media: supported
+                    Content-Type: application/sdp
+                    Session-Expires: 900
+                    Supported: 100rel, replaces, timer, precondition
+                    Accept: application/sdp
+                    Min-SE: 90
+                    """.toSipHeadersMap() + generateCallId()
+
+            // P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel
+            // Accept-Contact: *;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
+            // Supported: precondition
+            val msg =
+                SipRequest(
+                    SipMethod.INVITE,
+                    to,
+                    myHeaders,
+                    sdp
+                )
+            setResponseCallback(msg.headers["call-id"]!![0]) { resp: SipResponse ->
+                if (resp.statusCode == 200 || resp.statusCode == 202) {
+                    Rlog.d(TAG, "Invite got SUCCESS")
+                } else {
+                    Rlog.d(TAG, "Invite got status ${resp.statusCode} = ${resp.statusString}")
+
+                }
+                if(resp.headers["content-type"]?.get(0) == "application/sdp") {
+                    val respSdp = resp.body.toString(Charsets.UTF_8).split("[\r\n]+".toRegex()).toList()
+                    Rlog.d(TAG, "Split SDP into $sdp")
+                    fun sdpElement(command: String): String? {
+                        val v = respSdp.firstOrNull { it.startsWith("$command=")} ?: return null
+                        return v.substring(2)
+                    }
+                    val rtpRemotePort = sdpElement("m")!!.split(" ")[1]
+                    val rtpRemoteAddr = InetAddress.getByName(sdpElement("c")!!.split(" ")[2])
+
+                    currentCall = Call(
+                        amrTrack = amrTrack,
+                        amrTrackDesc = amrTrackDesc,
+                        dtmfTrack = dtmfTrack,
+                        dtmfTrackDesc = dtmfTrackDesc,
+                        callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
+                        rtpRemoteAddr = rtpRemoteAddr,
+                        rtpRemotePort = rtpRemotePort.toInt(),
+                        rtpSocket = rtpSocket,
+                        sdp = resp.body)
+
+                    callDecodeThread()
+                    callEncodeThread()
+                }
+                true
+            }
+            Rlog.d(TAG, "Sending $msg")
+            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        }
+    }
+
     fun callDecodeThread() {
         // Receiving thread
         thread {
