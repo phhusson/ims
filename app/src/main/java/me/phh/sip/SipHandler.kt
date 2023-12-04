@@ -1116,24 +1116,12 @@ a=sendrecv
                     ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
                 val smscStr = smsManager.smscAddress
                 val smscMatchRegex = Regex("([0-9]+)")
+                Rlog.d(TAG, "Got smsc $smscStr, match ${smscMatchRegex.find(smscStr!!)}")
                 smscMatchRegex.find(smscStr!!)!!.groupValues[1]
             }
         val data = SipSmsEncodeSms(ref.toByte(), "+$smsc", pdu)
         Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
-        /* XXX test
-        val t = SmsMessage.getSubmitPdu(smsc, "xxxxxxxxxxx", "hello", false)
-        val tpdu = t.encodedMessage
-        val headerSize = 3
-        val scSize = t.encodedScAddress?.size ?: 0
-        val v = ByteArray(tpdu.size + headerSize + scSize + 1)
-        v[0] = 0
-        v[1] = 0
-        v[2] = 0
-        if (t.encodedScAddress != null) System.arraycopy(t.encodedScAddress, 0, v, 3, scSize)
-        v[3 + scSize] = tpdu.size.toByte()
-        System.arraycopy(tpdu, 0, v, 3 + scSize + 1, tpdu.size)
-        Rlog.d(TAG, "phh would have sent ${v.toHex()}")
-        */
+
         val msg =
             SipRequest(
                 SipMethod.MESSAGE,
