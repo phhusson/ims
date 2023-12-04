@@ -89,7 +89,6 @@ class SipHandler(val ctxt: Context) {
     lateinit private var socket: SipConnectionTcp
     lateinit private var serverSocket: SipConnectionTcpServer
     lateinit private var serverSocketUdp: SipConnectionUdp
-    //private var rtpSocket: RtpConnection
     private var reliableSequenceCounter = 67
 
     private val cbLock = ReentrantLock()
@@ -440,7 +439,8 @@ class SipHandler(val ctxt: Context) {
         val writer = _writer ?: socket.writer
 
         fun secClient(alg: String, ealg: String) =
-            "ipsec-3gpp;prot=esp;mod=trans;spi-c=${clientSpiC.spi};spi-s=${clientSpiS.spi};port-c=${socket.localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+            "ipsec-3gpp;prot=esp;mod=trans;spi-c=${ipsecSettings.clientSpiC.spi};spi-s=${ipsecSettings.clientSpiS.spi};port-c=${socket.localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+
         val algs = listOf("hmac-sha-1-96", "hmac-md5-96")
         val ealgs = listOf("null", "aes-cbc")
         val secClients = algs.flatMap { alg -> ealgs.map { ealg -> secClient(alg, ealg) }}
