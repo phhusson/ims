@@ -88,7 +88,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
             val callProfile = ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE)
 
             callProfile.setCallExtra(ImsCallProfile.EXTRA_OI, from)
-            callProfile.setCallExtra(ImsCallProfile.EXTRA_DISPLAY_TEXT, "Bouyyaaa")
+            callProfile.setCallExtra(ImsCallProfile.EXTRA_DISPLAY_TEXT, from)
             notifyIncomingCall(object: ImsCallSessionImplBase() {
                 var mState = State.IDLE
                 override fun getCallProfile(): ImsCallProfile {
