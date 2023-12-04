@@ -5,6 +5,8 @@ import android.telephony.ims.feature.MmTelFeature;
 import android.telephony.ims.feature.ImsFeature;
 import android.telephony.ims.feature.CapabilityChangeRequest;
 import android.telephony.Rlog;
+import android.telephony.ims.stub.ImsRegistrationImplBase;
+
 import java.util.List;
 
 // intermediate class to MmTelFeature to extend
@@ -34,14 +36,19 @@ public class PhhMmTelFeatureProtected extends MmTelFeature {
 		toEnable.forEach((pair) -> {
 			int cap = pair.getCapability();
 			Rlog.d(TAG, "Adding " + cap + " to " + pair.getRadioTech());
-			this.capabilities |= cap;
+			if(pair.getRadioTech() == ImsRegistrationImplBase.REGISTRATION_TECH_LTE) {
+				this.capabilities |= cap;
+			}
 		});
+
 		List<CapabilityChangeRequest.CapabilityPair> toDisable =
 			capabilityChangeRequest.getCapabilitiesToDisable();
 		toDisable.forEach((pair) -> {
 			int cap = pair.getCapability();
 			Rlog.d(TAG, "Removing " + cap + " to " + pair.getRadioTech());
-			this.capabilities &= ~cap;
+			if(pair.getRadioTech() == ImsRegistrationImplBase.REGISTRATION_TECH_LTE) {
+				this.capabilities &= ~cap;
+			}
 		});
 		Rlog.d(TAG, "Final capabilities: " + this.capabilities);
 
