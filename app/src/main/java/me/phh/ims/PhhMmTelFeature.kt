@@ -151,21 +151,6 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
 
         imsService.getRegistration(slotId).onRegistering(REGISTRATION_TECH_LTE)
         sipHandler.getVolteNetwork()
-
-        /*
-         This works!
-        thread {
-            Rlog.d(TAG, "waiting before sending sms...")
-            Thread.sleep(1000);
-            Rlog.d(TAG, "Trying to send sms...")
-            // pdu from opt/telephony/tests/telephonytests/src/com/android/internal/telephony/GsmSmsTest.java
-            // check if compatible with what we get from SIP messages...
-            val pdu = "07914151551512f2040B916105551511f100006060605130308A04D4F29C0E".hexToByteArray()
-            // first argument is any unique id we want
-            // format is 3gpp or 3gpp2
-            mImsSms.onSmsReceived(1234123, "3gpp", pdu);
-        }
-        */
     }
 
     override fun onFeatureRemoved() {
