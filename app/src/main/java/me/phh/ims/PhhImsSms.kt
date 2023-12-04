@@ -23,50 +23,54 @@ class PhhImsSms(val slotId: Int) : ImsSmsImplBase() {
         isRetry: Boolean,
         pdu: ByteArray
     ) {
-        // called when android tries to send a sms?
-        Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc")
-        if (format != "3gpp") {
-            // we only know how to send 3gpp formatted sms.
-            // Android should do that correctly, error if not that will
-            // properly display 'message not sent' in messaging app
-            onSendSmsResultError(
-                token,
-                messageRef,
-                ImsSmsImplBase.SEND_STATUS_ERROR,
-                SmsManager.RESULT_INVALID_SMS_FORMAT,
-                RESULT_NO_NETWORK_ERROR
-            )
-            return
-        }
-        if (::sipHandler.isInitialized == false) {
-            onSendSmsResultError(
-                token,
-                messageRef,
-                ImsSmsImplBase.SEND_STATUS_ERROR_RETRY,
-                SmsManager.RESULT_ERROR_NO_SERVICE,
-                RESULT_NO_NETWORK_ERROR
-            )
-            return
-        }
-        sipHandler.sendSms(
-            smsc,
-            pdu,
-            messageRef,
-            {
-                // success cb
-                onSendSmsResultSuccess(token, messageRef)
-            },
-            {
-                // XXX better error code
+        try {
+            // called when android tries to send a sms?
+            Rlog.d(TAG, "$slotId sendSms $token, $messageRef, $format, $smsc")
+            if (format != "3gpp") {
+                // we only know how to send 3gpp formatted sms.
+                // Android should do that correctly, error if not that will
+                // properly display 'message not sent' in messaging app
                 onSendSmsResultError(
                     token,
                     messageRef,
                     ImsSmsImplBase.SEND_STATUS_ERROR,
-                    SmsManager.RESULT_ERROR_GENERIC_FAILURE,
+                    SmsManager.RESULT_INVALID_SMS_FORMAT,
                     RESULT_NO_NETWORK_ERROR
                 )
+                return
             }
-        )
+            if (::sipHandler.isInitialized == false) {
+                onSendSmsResultError(
+                    token,
+                    messageRef,
+                    ImsSmsImplBase.SEND_STATUS_ERROR_RETRY,
+                    SmsManager.RESULT_ERROR_NO_SERVICE,
+                    RESULT_NO_NETWORK_ERROR
+                )
+                return
+            }
+            sipHandler.sendSms(
+                smsc,
+                pdu,
+                messageRef,
+                {
+                    // success cb
+                    onSendSmsResultSuccess(token, messageRef)
+                },
+                {
+                    // XXX better error code
+                    onSendSmsResultError(
+                        token,
+                        messageRef,
+                        ImsSmsImplBase.SEND_STATUS_ERROR,
+                        SmsManager.RESULT_ERROR_GENERIC_FAILURE,
+                        RESULT_NO_NETWORK_ERROR
+                    )
+                }
+            )
+        } catch(t: Throwable) {
+            android.util.Log.e(TAG, "Failed sending sms", t)
+        }
     }
     override fun acknowledgeSms(token: Int, messageRef: Int, result: Int) {
         // called when android acks a received sms
