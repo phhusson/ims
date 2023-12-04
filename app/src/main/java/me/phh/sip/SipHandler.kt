@@ -682,34 +682,10 @@ a=sendrecv
 
             var firstPacket = true
 
-            val d = File("/sdcard/Android/data/me.phh.ims/files/")
-            val fo = FileOutputStream(File(d, "input.amr"))
-            fo.write("#!AMR\n".toByteArray())
-
-            var sinI = 0
             val buffer = ByteArray(minBufferSize)
             while (true) {
                 if (callStopped.get()) break
                 val nRead = audioRecord.read(buffer, 0, buffer.size)
-                //Rlog.d(TAG, "Received $nRead Bytes from AudioRecorder average is ${buffer.toList().average()}")
-
-                var sum = 0.0
-                var sum2 = 0.0
-                for(i in 0 until nRead/2) {
-                    val inLow = buffer[2*i].toUByte().toInt()
-                    val inHigh = buffer[2*i+1].toUByte().toInt() shl 8
-                    val value = (inLow or inHigh).toShort()
-                    sum += value.toDouble() * value.toDouble()
-
-                    //val newValue = (value.toInt() shl 4).toShort()
-                   /* val newValue = (20000 * Math.sin(2 * Math.PI * sinI / 20.0)).toInt().toShort()
-                    sinI++
-                    sum2 += newValue.toDouble() * newValue.toDouble()
-                    buffer[2*i] = (newValue.toInt() and 0xff).toByte()
-                    buffer[2*i+1] = (newValue.toInt() shr 8).toByte()*/
-                }
-                //Rlog.d(TAG, "Original average power is ${sqrt(sum.toDouble()) / (nRead/2)}")
-                //Rlog.d(TAG, "Post average power is ${sqrt(sum2.toDouble()) / (nRead/2)}")
 
                 val inBufIdx = encoder.dequeueInputBuffer(-1)
                 val inBuf = encoder.getInputBuffer(inBufIdx)!!
@@ -723,12 +699,10 @@ a=sendrecv
                 val outBufIdx = encoder.dequeueOutputBuffer(outBufInfo, 0)
                 if (outBufIdx >= 0) {
                     val outBuf = encoder.getOutputBuffer(outBufIdx)!!
-                    //Rlog.d(TAG, "Received ${outBufInfo.size} bytes from encoder ")
 
                     val encoderData = ByteArray(outBufInfo.size)
                     outBuf.get(encoderData)
                     encoder.releaseOutputBuffer(outBufIdx, false)
-                    fo.write(encoderData)
 
                     var bufPos = 0
                     while(bufPos < outBufInfo.size) {
@@ -764,7 +738,6 @@ a=sendrecv
                         //val lastByte = (encoderData[bufPos + frameSize - 1].toUByte().toUInt().toInt() and 0x3) shl 6
 
                         val buf = (rtpHeader + firstByte + secondByte + nextBytes /*+ lastByte*/).map { it.toUByte() }.toUByteArray().toByteArray()
-                        //Rlog.d(TAG, "Sending buf of size ${buf.size}")
 
                         val dgramPacket =
                             DatagramPacket(buf, buf.size, call.rtpRemoteAddr, call.rtpRemotePort)
@@ -839,11 +812,6 @@ a=sendrecv
     fun callDecodeThread() {
         // Receiving thread
         thread {
-            val d = File("/sdcard/Android/data/me.phh.ims/files/")
-            d.mkdirs()
-            val fo = FileOutputStream(File(d, "output.amr"))
-            fo.write("#!AMR\n".toByteArray())
-
             val minBufferSize = AudioTrack.getMinBufferSize(8000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
             val audioTrack = AudioTrack(AudioManager.STREAM_VOICE_CALL, 8000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT, minBufferSize, AudioTrack.MODE_STREAM)
             audioTrack.play()
@@ -871,7 +839,6 @@ a=sendrecv
                 // Packet size 32, FT=7
                 val baOs = ByteArrayOutputStream()
 
-                fo.write( ft.toInt() shl 3)
                 baOs.write( ft.toInt() shl 3)
 
                 var m = 0
@@ -881,7 +848,6 @@ a=sendrecv
                     val left = (dgramBuf[i].toUByte().toUInt().toInt() and 0x3f)  shl 2
                     val right = (dgramBuf[i + 1 ].toUByte().toUInt().toInt() shr 6) and 0x3
                     m++
-                    fo.write(left or right)
                     baOs.write(left or right)
                 }
                 Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
