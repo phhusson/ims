@@ -8,9 +8,9 @@ android {
 
     defaultConfig {
         applicationId "me.phh.ims"
-        minSdk 33
+        minSdk 32
         targetSdk 33
-        versionCode 1
+        versionCode 33
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
