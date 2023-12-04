@@ -33,6 +33,7 @@ android {
 
 dependencies {
     compileOnly fileTree(dir: 'libs', include: '*.jar')
+    implementation files('libs/ImsMediaFramework.jar')
     implementation 'androidx.core:core-ktx:1.9.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.1'

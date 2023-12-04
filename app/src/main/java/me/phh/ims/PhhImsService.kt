@@ -13,6 +13,7 @@ import android.telephony.ims.feature.MmTelFeature
 import android.telephony.ims.feature.RcsFeature
 import android.telephony.ims.stub.ImsConfigImplBase
 import android.telephony.ims.stub.ImsRegistrationImplBase
+import android.telephony.imsmedia.ImsMediaManager
 
 class PhhImsService : ImsService() {
     companion object {

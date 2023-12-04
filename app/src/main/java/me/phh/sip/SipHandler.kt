@@ -4,17 +4,21 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.media.*
 import android.net.*
+import android.os.Handler
+import android.os.HandlerThread
 import android.telephony.PhoneNumberUtils
 import android.telephony.Rlog
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
+import android.telephony.imsmedia.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.*
 import java.net.*
 import java.util.*
+import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
@@ -30,6 +34,19 @@ class SipHandler(val ctxt: Context) {
     companion object {
         private const val TAG = "PHH SipHandler"
     }
+
+    val myHandler = Handler(HandlerThread("PhhMmTelFeature").apply { start() }.looper)
+    val myExecutor = Executor { p0 -> myHandler.post(p0) }
+    val imsMediaManager = ImsMediaManager(ctxt, myExecutor, object:
+        ImsMediaManager.OnConnectedCallback {
+        override fun onConnected() {
+            Rlog.d(TAG, "ImsMediaManager connected")
+        }
+
+        override fun onDisconnected() {
+            Rlog.d(TAG, "ImsMediaManager disconnected")
+        }
+    })
 
     private val subscriptionManager: SubscriptionManager
     private val telephonyManager: TelephonyManager
@@ -622,6 +639,9 @@ a=sendrecv
     fun handleCancel(request: SipRequest): Int {
         callStopped.set(true)
         Rlog.d(TAG, "Cancelled call ${request.headers["call-id"]!![0]}")
+
+        currentCall?.imsMediaSession?.let { imsMediaManager.closeSession(it) }
+
         // We're supposed to add an additional answer SIP/2.0 487 Request Terminated
         onCancelledCall?.invoke(Object(), "", emptyMap())
         return 200
@@ -636,7 +656,8 @@ a=sendrecv
         val dtmfTrackDesc: String,
         val rtpRemoteAddr: InetAddress,
         val rtpRemotePort: Int,
-        val rtpSocket: DatagramSocket
+        val rtpSocket: DatagramSocket,
+        val imsMediaSession: ImsMediaSession? = null
     )
 
 
@@ -804,18 +825,27 @@ a=sendrecv
                 )
             Rlog.d(TAG, "Sending $msg")
             synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+
             callStopped.set(true)
             onCancelledCall?.invoke(Object(), "", emptyMap())
         }
+    }
+
+    fun terminateCall() {
+        // IDK what packet do we send, but at least we're close rtp
+        currentCall?.imsMediaSession?.let { imsMediaManager.closeSession(it) }
+        callStopped.set(true)
+
+        onCancelledCall?.invoke(Object(), "", emptyMap())
     }
 
     fun call(phoneNumber: String) {
         thread {
 
             val rtpSocket = DatagramSocket(0, localAddr)
+            val fakeRtcpSocket = DatagramSocket(0, localAddr) //useless but annoying ImsMediaManager
             network.bindSocket(rtpSocket)
             //rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
-
 
             val amrTrack = 97
             val amrTrackDesc = "fmtp:97 mode-change-capability=2;octet-align=0;max-red=0"
@@ -909,8 +939,51 @@ a=sendrecv
                         rtpSocket = rtpSocket,
                         sdp = resp.body)
 
-                    callDecodeThread()
-                    callEncodeThread()
+                    if(true) {
+                        callDecodeThread()
+                        callEncodeThread()
+                    } else {
+                        imsMediaManager.openSession(
+                            rtpSocket, fakeRtcpSocket,
+                            ImsMediaSession.SESSION_TYPE_AUDIO,
+                            AudioConfig.Builder()
+                                .setCodecType(AudioConfig.CODEC_AMR)
+                                .setRxPayloadTypeNumber(amrTrack.toByte())
+                                .setTxPayloadTypeNumber(amrTrack.toByte())
+                                .setRemoteRtpAddress(InetSocketAddress(rtpRemoteAddr, rtpRemotePort.toInt()))
+                                .setSamplingRateKHz(8)
+                                .setAmrParams(AmrParams.Builder()
+                                    .setOctetAligned(false)
+                                    .setAmrMode(AmrParams.AMR_MODE_7)
+                                    .build())
+                                .setMediaDirection(RtpConfig.MEDIA_DIRECTION_SEND_RECEIVE)
+                                .build(),
+                            myExecutor,
+                            object: AudioSessionCallback() {
+                                override fun onOpenSessionSuccess(session: ImsMediaSession) {
+                                    Rlog.d(TAG, "Opened session $session")
+                                    currentCall = Call(
+                                        amrTrack = amrTrack,
+                                        amrTrackDesc = amrTrackDesc,
+                                        dtmfTrack = dtmfTrack,
+                                        dtmfTrackDesc = dtmfTrackDesc,
+                                        callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
+                                        rtpRemoteAddr = rtpRemoteAddr,
+                                        rtpRemotePort = rtpRemotePort.toInt(),
+                                        rtpSocket = rtpSocket,
+                                        sdp = resp.body,
+                                        imsMediaSession = session)
+                                }
+
+                                override fun onOpenSessionFailure(error: Int) {
+                                    Rlog.d(TAG, "Failed to open session $error")
+                                }
+                                override fun onSessionClosed() {
+                                    Rlog.d(TAG, "Session closed")
+                                }
+                            }
+                        )
+                    }
                 }
                 true
             }
@@ -1084,8 +1157,6 @@ a=sendrecv
             network.bindSocket(rtpSocket)
             rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
 
-            callDecodeThread()
-
             val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
             val contactTel =
@@ -1143,6 +1214,61 @@ a=sendrecv
                 sdp = mySdp
             )
 
+            if(false) {
+                val fakeRtcpSocket = DatagramSocket(0, localAddr) //useless but annoying ImsMediaManager
+                imsMediaManager.openSession(
+                    rtpSocket, fakeRtcpSocket,
+                    ImsMediaSession.SESSION_TYPE_AUDIO,
+                    AudioConfig.Builder()
+                        .setCodecType(AudioConfig.CODEC_AMR)
+                        .setRxPayloadTypeNumber(amrTrack.toByte())
+                        .setTxPayloadTypeNumber(amrTrack.toByte())
+                        .setRemoteRtpAddress(
+                            InetSocketAddress(
+                                rtpRemoteAddr,
+                                rtpRemotePort.toInt()
+                            )
+                        )
+                        .setSamplingRateKHz(8)
+                        .setAmrParams(
+                            AmrParams.Builder()
+                                .setOctetAligned(false)
+                                .setAmrMode(AmrParams.AMR_MODE_7)
+                                .build()
+                        )
+                        .setMediaDirection(RtpConfig.MEDIA_DIRECTION_SEND_RECEIVE)
+                        .build(),
+                    myExecutor,
+                    object: AudioSessionCallback() {
+                        override fun onOpenSessionSuccess(session: ImsMediaSession) {
+                            Rlog.d(TAG, "Opened session $session")
+                            currentCall = Call(
+                                amrTrack = amrTrack,
+                                amrTrackDesc = amrTrackDesc,
+                                dtmfTrack = dtmfTrack,
+                                dtmfTrackDesc = dtmfTrackDesc,
+                                callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
+                                rtpRemoteAddr = rtpRemoteAddr,
+                                rtpRemotePort = rtpRemotePort.toInt(),
+                                rtpSocket = rtpSocket,
+                                sdp = mySdp,
+                                imsMediaSession = session)
+                        }
+
+                        override fun onOpenSessionFailure(error: Int) {
+                            Rlog.d(TAG, "Failed to open session $error")
+                        }
+                        override fun onSessionClosed() {
+                            Rlog.d(TAG, "Session closed")
+                        }
+                    }
+                )
+            } else {
+                callDecodeThread()
+                callEncodeThread()
+            }
+
+
             synchronized(prAckWaitLock) {
                 prAckWait += mySeqCounter
             }
@@ -1167,7 +1293,7 @@ a=sendrecv
             Rlog.d(TAG, "Sending $msg2")
             synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }*/
 
-            callEncodeThread()
+
         }
         return 100
     }
