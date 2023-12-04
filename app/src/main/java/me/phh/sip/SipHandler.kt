@@ -360,12 +360,13 @@ class SipHandler(val ctxt: Context) {
     fun getVolteNetwork() {
         // TODO add something similar for VoWifi ipsec tunnel?
         Rlog.d(TAG, "Requesting IMS network")
-        connectivityManager.registerNetworkCallback(
-            NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-                .setNetworkSpecifier(subId.toString())
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-                .build(),
+        connectivityManager.requestNetwork(NetworkRequest.Builder()
+            //.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            //.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            //.setNetworkSpecifier(subId.toString())
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+            //.addCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)
+            .build(),
             object : ConnectivityManager.NetworkCallback() {
                 override fun onUnavailable() {
                     Rlog.d(TAG, "IMS network unavailable")
