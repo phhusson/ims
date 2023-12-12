@@ -1,5 +1,7 @@
 package me.phh.sip
 
+import java.util.concurrent.atomic.AtomicInteger
+
 /* type definitions */
 
 enum class SipMethod {
@@ -116,6 +118,7 @@ open class SipCommonMessage(
     }
 }
 
+val cseqCounter = AtomicInteger(2)
 data class SipRequest(
     val method: SipMethod,
     val destination: String,
@@ -144,7 +147,8 @@ data class SipRequest(
         val newHeaders = mutableMapOf<String, List<SipHeader>>()
 
         if (headersParam["cseq"] == null) {
-            newHeaders["cseq"] = listOf("1 ${this.method}")
+            val v = cseqCounter.getAndIncrement()
+            newHeaders["cseq"] = listOf("$v ${this.method}")
         }
 
         val from = headersParam["from"]

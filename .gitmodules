@@ -1,0 +1,3 @@
+[submodule "app/jni/rnnoise"]
+	path = app/jni/rnnoise
+	url = https://github.com/xiph/rnnoise

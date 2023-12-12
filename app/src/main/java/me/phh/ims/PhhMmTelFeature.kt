@@ -1,5 +1,6 @@
 package me.phh.ims
 
+import android.content.Context
 import android.os.Message
 import android.telephony.Rlog
 import android.telephony.ims.ImsCallProfile
@@ -187,6 +188,7 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
                 }
 
                 override fun terminate(reason: Int) {
+                    sipHandler.terminateCall()
                     Rlog.d(TAG, "Terminating call")
                 }
 

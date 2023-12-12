@@ -423,7 +423,10 @@ class SipHandler(val ctxt: Context) {
                     Rlog.d(TAG, "Got IMS network.")
                     if (!this@SipHandler::network.isInitialized) {
                         network = _network
-                        connect()
+                        thread {
+                            Thread.sleep(4000)
+                            connect()
+                        }
                     } else {
                         Rlog.d(TAG, "... don't try anything")
                     }
@@ -592,18 +595,30 @@ m=audio ${call.rtpSocket.localPort} RTP/AVP ${allTracks.joinToString(" ")}
 b=AS:38
 b=RS:0
 b=RR:0
+a=rtpmap:${call.amrTrack} AMR/8000/1
+a=rtpmap:${call.dtmfTrack} telephone-event/8000
 a=${call.amrTrackDesc}
 a=ptime:20
 a=maxptime:240
 a=${call.dtmfTrackDesc}
-a=fmtp:${call.amrTrack} max-red=0
-a=fmtp:${call.dtmfTrack} 0-15
 a=curr:qos local sendrecv
 a=curr:qos remote sendrecv
 a=des:qos mandatory local sendrecv
 a=des:qos mandatory remote sendrecv
 a=sendrecv
                        """.trim().toByteArray()
+
+        currentCall = Call(
+            outgoing =  call.outgoing,
+            amrTrack = call.amrTrack,
+            amrTrackDesc = call.amrTrackDesc,
+            dtmfTrack = call.dtmfTrack,
+            dtmfTrackDesc = call.dtmfTrackDesc,
+            callHeaders = call.callHeaders,
+            rtpRemoteAddr = call.rtpRemoteAddr,
+            rtpRemotePort = call.rtpRemotePort,
+            rtpSocket = call.rtpSocket,
+            sdp = request.body)
 
         val reply =
             SipResponse(
@@ -623,15 +638,17 @@ a=sendrecv
         Rlog.d(TAG, "Replying back with $reply")
         synchronized(socket.writer) { socket.writer.write(reply.toByteArray()) }
 
-        val myHeaders2 = call.callHeaders - "rseq" - "content-type" - "require"
-        val msg2 =
-            SipResponse(
-                statusCode = 180,
-                statusString = "Ringing",
-                headersParam = myHeaders2
-            )
-        Rlog.d(TAG, "Sending $msg2")
-        synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+        if(call?.outgoing == false) {
+            val myHeaders2 = call.callHeaders - "rseq" - "content-type" - "require"
+            val msg2 =
+                SipResponse(
+                    statusCode = 180,
+                    statusString = "Ringing",
+                    headersParam = myHeaders2
+                )
+            Rlog.d(TAG, "Sending $msg2")
+            synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+        }
 
         return 0
     }
@@ -648,6 +665,7 @@ a=sendrecv
     }
 
     data class Call(
+        val outgoing: Boolean,
         val callHeaders: SipHeadersMap,
         val sdp: ByteArray,
         val amrTrack: Int,
@@ -811,6 +829,27 @@ a=sendrecv
         }
     }
 
+    fun prack(resp: SipResponse) {
+        val who = extractDestinationFromContact(resp.headers["contact"]!![0])
+        val callId = resp.headers["call-id"]!![0]
+        val rseq = resp.headers["rseq"]!![0]
+        val whatToPrack = "$rseq ${resp.headers["cseq"]!![0]}"
+        val msg =
+            SipRequest(
+                SipMethod.PRACK,
+                who,
+                headersParam = commonHeaders + """
+                    RAck: $whatToPrack
+                    Require: sec-agree
+                    To: ${resp.headers["to"]!![0]}
+                    From: ${resp.headers["from"]!![0]}
+                    Call-Id: $callId
+                    """.toSipHeadersMap()
+            )
+        Rlog.d(TAG, "Sending $msg")
+        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+    }
+
     fun rejectCall() {
         thread {
             val call = currentCall!!
@@ -839,6 +878,7 @@ a=sendrecv
         onCancelledCall?.invoke(Object(), "", emptyMap())
     }
 
+    var respInFlight: SipResponse? = null
     fun call(phoneNumber: String) {
         thread {
 
@@ -872,17 +912,20 @@ a=ptime:20
 a=maxptime:240
 a=rtpmap:$amrTrack AMR/8000/1
 a=rtpmap:$dtmfTrack telephone-event/8000
-a=fmtp:$amrTrack mode-change-capability=2;octet-aling=0;max-red=0
+a=fmtp:$amrTrack mode-change-capability=2;octet-align=0;max-red=0
 a=fmtp:$dtmfTrack 0-15
 a=curr:qos local none
 a=curr:qos remote none
-a=des:qos mandatory local sendrecv
-a=des:qos mandatory remote sendrecv
-a=conf:qos remote sendrecv
+a=des:qos optional local sendrecv
+a=des:qos optional remote sendrecv
 a=sendrecv
                        """.trim().toByteArray()
 
             val to = "tel:$phoneNumber;phone-context=ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
+            val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
+            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val contactTel =
+                """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val myHeaders = commonHeaders +
                 """
                     From: <$mySip>
@@ -899,11 +942,12 @@ a=sendrecv
                     Supported: 100rel, replaces, timer, precondition
                     Accept: application/sdp
                     Min-SE: 90
-                    """.toSipHeadersMap() + generateCallId()
-
+                    Accept-Contact: *;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
+                    P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel
+                    Contact: $contactTel
+                    """.toSipHeadersMap() + generateCallId() - "p-asserted-identity"
             // P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel
             // Accept-Contact: *;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
-            // Supported: precondition
             val msg =
                 SipRequest(
                     SipMethod.INVITE,
@@ -911,38 +955,119 @@ a=sendrecv
                     myHeaders,
                     sdp
                 )
-            setResponseCallback(msg.headers["call-id"]!![0]) { resp: SipResponse ->
-                if (resp.statusCode == 200 || resp.statusCode == 202) {
+            setResponseCallback(msg.headers["call-id"]!![0]) { r: SipResponse ->
+                var resp = r
+                var cseq = resp.headers["cseq"]!![0]
+
+                var rseqHandled = false
+                // If we stopped our process to PRACK a response, start again processing it
+                if (cseq.contains("PRACK")) {
+                    resp = respInFlight!!
+                    respInFlight = null
+                    cseq = resp.headers["cseq"]!![0]
+                    rseqHandled = true
+                }
+
+                if (cseq.contains("ACK")) return@setResponseCallback  false
+
+                if (cseq.contains("INVITE") && (resp.statusCode == 200 || resp.statusCode == 202)) {
+                    val msg2 =
+                        SipRequest(
+                            SipMethod.ACK,
+                            to,
+                            myHeaders - "content-type"
+                        )
+                    synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
                     Rlog.d(TAG, "Invite got SUCCESS")
                 } else {
                     Rlog.d(TAG, "Invite got status ${resp.statusCode} = ${resp.statusString}")
-
                 }
-                if(resp.headers["content-type"]?.get(0) == "application/sdp") {
-                    val respSdp = resp.body.toString(Charsets.UTF_8).split("[\r\n]+".toRegex()).toList()
-                    Rlog.d(TAG, "Split SDP into $sdp")
-                    fun sdpElement(command: String): String? {
-                        val v = respSdp.firstOrNull { it.startsWith("$command=")} ?: return null
-                        return v.substring(2)
+
+                if(resp.headers["rseq"]?.isNotEmpty() == true && !rseqHandled) {
+                    prack(resp)
+                    respInFlight = resp
+                    return@setResponseCallback false
+                }
+
+                val isSdp = resp.headers["content-type"]?.get(0) == "application/sdp"
+                val isPrecondition = resp.headers["require"]?.get(0)?.contains("precondition") == true
+
+                if (!isSdp) return@setResponseCallback false
+
+                val respSdp = resp.body.toString(Charsets.UTF_8).split("[\r\n]+".toRegex()).toList()
+
+                fun sdpElement(command: String): String? {
+                    val v = respSdp.firstOrNull { it.startsWith("$command=")} ?: return null
+                    return v.substring(2)
+                }
+                val rtpRemotePort = sdpElement("m")!!.split(" ")[1]
+                val rtpRemoteAddr = InetAddress.getByName(sdpElement("c")!!.split(" ")[2])
+                currentCall = Call(
+                    outgoing = true,
+                    amrTrack = amrTrack,
+                    amrTrackDesc = amrTrackDesc,
+                    dtmfTrack = dtmfTrack,
+                    dtmfTrackDesc = dtmfTrackDesc,
+                    // Update from/to/call-id based on the response we got to include the remote tag
+                    callHeaders = myHeaders - "require" - "content-type" + ("from" to resp.headers["from"]!!) + ("to" to resp.headers["to"]!!) + ("call-id" to resp.headers["call-id"]!!),
+                    rtpRemoteAddr = rtpRemoteAddr,
+                    rtpRemotePort = rtpRemotePort.toInt(),
+                    rtpSocket = rtpSocket,
+                    sdp = resp.body)
+
+                // This isn't the answer to our INVITE, but to our later precondition UPDATE
+                // TODO Actually check cseq
+                if(resp.headers["cseq"]?.get(0)?.contains("UPDATE") == true) {
+                    if(isSdp && resp.statusCode == 200) {
+                        // Nothing to do here, we've already upgraded the call with the new SDP, everything's fine
+                        return@setResponseCallback false
                     }
-                    val rtpRemotePort = sdpElement("m")!!.split(" ")[1]
-                    val rtpRemoteAddr = InetAddress.getByName(sdpElement("c")!!.split(" ")[2])
+                }
 
-                    currentCall = Call(
-                        amrTrack = amrTrack,
-                        amrTrackDesc = amrTrackDesc,
-                        dtmfTrack = dtmfTrack,
-                        dtmfTrackDesc = dtmfTrackDesc,
-                        callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
-                        rtpRemoteAddr = rtpRemoteAddr,
-                        rtpRemotePort = rtpRemotePort.toInt(),
-                        rtpSocket = rtpSocket,
-                        sdp = resp.body)
+                if(isPrecondition && resp.statusCode == 183) {
+                    Rlog.d(TAG, "Handling precondition...")
+                    val currLocal = respSdp.first { it.startsWith("a=curr:qos local")}
+                    // No resource has been allocated at either side
+                    val localNone = currLocal.contains("none")
+                    Rlog.d(TAG, "precondition: Curr is $currLocal $localNone")
+                    val currRemote = respSdp.first { it.startsWith("a=curr:qos remote")}
+                    val remoteNone = currRemote.contains("none")
 
-                    if(true) {
+                    if (localNone) {
+                        // "Allocating our local resource" and update the call
                         callDecodeThread()
                         callEncodeThread()
-                    } else {
+
+                        val newSdp = respSdp.map { line ->
+                            if (line.startsWith("a=curr:qos local")) {
+                                "a=curr:qos local sendrecv"
+                            } else if (line.startsWith("a=des:qos mandatory local")) {
+                                "a=des:qos mandatory local sendrecv"
+                            } else {
+                                line
+                            }
+                        }.joinToString("\r\n").toByteArray()
+
+                        val msg2 =
+                            SipRequest(
+                                SipMethod.UPDATE,
+                                to,
+                                currentCall!!.callHeaders + ("content-type" to listOf("application/sdp")),
+                                newSdp
+                            )
+                        Rlog.d(TAG, "Sending $msg2")
+                        synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+                    }
+
+                    return@setResponseCallback false
+                }
+
+                if(!isPrecondition && resp.statusCode == 183) {
+                    callDecodeThread()
+                    callEncodeThread()
+                }
+
+                   /* } else {
                         imsMediaManager.openSession(
                             rtpSocket, fakeRtcpSocket,
                             ImsMediaSession.SESSION_TYPE_AUDIO,
@@ -967,7 +1092,7 @@ a=sendrecv
                                         amrTrackDesc = amrTrackDesc,
                                         dtmfTrack = dtmfTrack,
                                         dtmfTrackDesc = dtmfTrackDesc,
-                                        callHeaders = myHeaders - "require" - "content-type" + "Supported: 100rel, replaces, timer".toSipHeadersMap(),
+                                        callHeaders = myHeaders - "require" - "content-type" + "Supported: precondition, 100rel, replaces, timer".toSipHeadersMap(),
                                         rtpRemoteAddr = rtpRemoteAddr,
                                         rtpRemotePort = rtpRemotePort.toInt(),
                                         rtpSocket = rtpSocket,
@@ -983,9 +1108,8 @@ a=sendrecv
                                 }
                             }
                         )
-                    }
-                }
-                true
+                    }*/
+                false // Return true when we want to stop receiving messages for that call
             }
             Rlog.d(TAG, "Sending $msg")
             synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
@@ -1044,6 +1168,7 @@ a=sendrecv
                 decoder.queueInputBuffer(inBufIndex, 0, data.size, 0, 0)
 
                 //TODO: Support DTX (comfort noise frames that don't repeat)
+                //TODO: Can we receive multiple outs per in?
                 val outBufInfo = MediaCodec.BufferInfo()
                 val outBufIndex = decoder.dequeueOutputBuffer(outBufInfo, 0)
                 Rlog.d(TAG, "Got decoding output buffer $outBufIndex")
@@ -1058,6 +1183,11 @@ a=sendrecv
             decoder.stop()
             decoder.release()
         }
+    }
+
+    fun extractDestinationFromContact(contact: String): String {
+        val r = Regex(".*<(sip:[^>]*)>.*")
+        return r.find(contact)!!.groups[1]!!.value
     }
 
     val callStopped = AtomicBoolean(false)
@@ -1153,7 +1283,7 @@ a=sendrecv
         thread {
             // Need to sleep a bit so that our 100 Trying is sent first. Kinda weird.
             Thread.sleep(500)
-            val rtpSocket = java.net.DatagramSocket(0, localAddr)
+            val rtpSocket = DatagramSocket(0, localAddr)
             network.bindSocket(rtpSocket)
             rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
 
@@ -1203,6 +1333,7 @@ a=sendrecv
                 "route" - "security-verify"
 
             currentCall = Call(
+                outgoing = false,
                 amrTrack = amrTrack,
                 amrTrackDesc = amrTrackDesc,
                 dtmfTrack = dtmfTrack,
@@ -1243,6 +1374,7 @@ a=sendrecv
                         override fun onOpenSessionSuccess(session: ImsMediaSession) {
                             Rlog.d(TAG, "Opened session $session")
                             currentCall = Call(
+                                outgoing = false,
                                 amrTrack = amrTrack,
                                 amrTrackDesc = amrTrackDesc,
                                 dtmfTrack = dtmfTrack,
