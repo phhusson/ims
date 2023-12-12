@@ -18,10 +18,10 @@ class Rnnoise : AutoCloseable {
         // TODO: Check alignment
         // Loop over frames
         val frameSize = getFrameSize()
-        for(i in 0 until input.size / frameSize) {
-            val inSlice = input.sliceArray(i * frameSize until (i + 1) * frameSize)
-            val outSlice = out.sliceArray(i * frameSize until (i + 1) * frameSize)
-            android.util.Log.e("PHH", "Processing frame $i ${inSlice.size} ${outSlice.size}")
+        for(i in 0 until input.size / (2*frameSize)) {
+            val inSlice = input.sliceArray(2*i * frameSize until 2*(i + 1) * frameSize)
+            val outSlice = out.sliceArray(2*i * frameSize until 2*(i + 1) * frameSize)
+            //android.util.Log.e("PHH", "Processing frame $i ${inSlice.size} ${outSlice.size}")
             processFrame(st, inSlice, outSlice)
         }
     }
