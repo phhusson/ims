@@ -29,6 +29,12 @@ android {
     kotlinOptions {
         jvmTarget = '1.8'
     }
+    externalNativeBuild {
+        cmake {
+            path file('jni/CMakeLists.txt')
+        }
+    }
+    namespace 'me.phh.ims'
 }
 
 dependencies {

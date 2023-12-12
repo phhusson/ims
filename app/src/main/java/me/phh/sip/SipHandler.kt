@@ -15,6 +15,7 @@ import android.telephony.imsmedia.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import me.phh.ims.Rnnoise
 import java.io.*
 import java.net.*
 import java.util.*
@@ -685,6 +686,12 @@ a=sendrecv
         thread {
             var sequenceNumber = 0
 
+            val encoder = MediaCodec.createEncoderByType("audio/3gpp")
+            val mediaFormat = MediaFormat.createAudioFormat("audio/3gpp", 8000, 1)
+            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 12200)
+            encoder.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
             while(!callStarted.get()) {
                 val timestamp = sequenceNumber * 160
                 Thread.sleep(20)
@@ -706,30 +713,30 @@ a=sendrecv
                 sequenceNumber++
             }
 
+            val rnnNoise = Rnnoise()
+
             // DANGER: Don't open the mic before the user acknowledged opening the call!
 
             val minBufferSize = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             val audioRecord = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBufferSize)
 
-            val encoder = MediaCodec.createEncoderByType("audio/3gpp")
-            val mediaFormat = MediaFormat.createAudioFormat("audio/3gpp", 8000, 1)
-            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 12200)
-            encoder.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            encoder.start()
-
             audioRecord.startRecording()
 
             var firstPacket = true
 
-            val buffer = ByteArray(minBufferSize)
+            val bufferSize = (minBufferSize + (rnnNoise.getFrameSize() -1)) % rnnNoise.getFrameSize()
+            val buffer = ByteArray(bufferSize)
+            val bufferPostRnnoise = ByteArray(bufferSize)
             while (true) {
                 if (callStopped.get()) break
-                val nRead = audioRecord.read(buffer, 0, buffer.size)
+                val nRead = audioRecord.read(buffer,0, buffer.size)
+                // Convert buffer from ByteArray to ShortArray
+                rnnNoise.processFrame(buffer, bufferPostRnnoise)
 
                 val inBufIdx = encoder.dequeueInputBuffer(-1)
                 val inBuf = encoder.getInputBuffer(inBufIdx)!!
                 inBuf.clear()
-                inBuf.put(buffer, 0, nRead)
+                inBuf.put(bufferPostRnnoise, 0, nRead)
 
                 // Fake timestamp but it is not appearing in the output stream anyway
                 encoder.queueInputBuffer(inBufIdx, 0, nRead, System.nanoTime() / 1000, 0)
@@ -760,7 +767,7 @@ a=sendrecv
                         firstPacket = false
 
                         val ft = (encoderData[bufPos + 0].toUInt().toInt() shr 3) and 0xf
-                        val cmr = 2 // idk why, the capture I have uses cmr = 2 but ft = 7
+                        val cmr = 7 // we want to announce we want the 12.2kbps profile
                         val f = 0
                         val q = 1
                         val firstByte = (cmr shl 4) or (f shl 3) or (ft shr 1)
