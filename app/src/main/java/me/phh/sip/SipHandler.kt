@@ -886,6 +886,30 @@ a=sendrecv
         onCancelledCall?.invoke(Object(), "", emptyMap())
     }
 
+    /*
+    Note: local/remote none/sendrecv are the precondition extension status.
+    They basically mean that local/remote are pre-allocating resources before fulfilling the call
+
+    Outgoing call process:
+    (Note: If not specified, Requests are local => remote, response are remote => local)
+    1. INVITE with SDP containing none current status, and all tracks we can support
+    2. (useless) 100 Trying
+    3. 183 Session Progress with SDP containing none current status, but selected one track and Rseq
+    4. PRACK 183's RSeq and wait for its 200 OK PRACK
+    5. UPDATE with SDP containing local sendrecv and remote none (We're starting decoding/encoding, but don't open mic)
+    6. 200 OK UPDATE with SDP containing local sendrecv and remote sendrecv (precondition fullfilled)
+    7. 183 Session Progress on the INVITE (no SDP, no PRACK)
+    8. UPDATE from remote to local with final SDP (precondition infos can be absent)
+    9. 200 OK UPDATE from local to remote with our final SDP
+    10. 180 Ringing on INVITE (meaning it's actually ringing on the other side)
+    11. 200 OK on INVITE (meaning the call is accepted) (opening mic)
+    12. ACK (no answer?)
+
+    Call is now running
+    During call, remote will regularly send 200 OK on INVITE to keep alive (we have the timer extension enabled)
+    We probably need to keep sending UPDATE-s regularly to keep alive
+     */
+
     var respInFlight: SipResponse? = null
     fun call(phoneNumber: String) {
         thread {
