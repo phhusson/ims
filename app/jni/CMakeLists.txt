@@ -9,5 +9,8 @@ add_library(
     rnnoise/src/rnn_data.c
     rnnoise/src/pitch.c
     rnnoise/src/celt_lpc.c)
-target_link_libraries(rnnoise_jni PRIVATE m)
+target_link_libraries(rnnoise_jni PRIVATE m log)
 target_include_directories(rnnoise_jni PUBLIC rnnoise/include)
+#target_compile_options(rnnoise_jni PUBLIC -fsanitize=address -fno-omit-frame-pointer)
+#set_target_properties(rnnoise_jni PROPERTIES LINK_FLAGS -fsanitize=address)
+

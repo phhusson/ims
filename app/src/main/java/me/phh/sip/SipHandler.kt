@@ -724,7 +724,8 @@ a=sendrecv
 
             var firstPacket = true
 
-            val bufferSize = (minBufferSize + (rnnNoise.getFrameSize() -1)) % rnnNoise.getFrameSize()
+            val bufferSize = ((minBufferSize + (rnnNoise.getFrameSize() - 1 )) / rnnNoise.getFrameSize()).toInt() * rnnNoise.getFrameSize()
+            Rlog.e(TAG, "Chosing buffersize $bufferSize")
             val buffer = ByteArray(bufferSize)
             val bufferPostRnnoise = ByteArray(bufferSize)
             while (true) {
@@ -978,6 +979,7 @@ a=sendrecv
                 if (cseq.contains("ACK")) return@setResponseCallback  false
 
                 if (cseq.contains("INVITE") && (resp.statusCode == 200 || resp.statusCode == 202)) {
+                    // TODO Send UI that call started
                     val msg2 =
                         SipRequest(
                             SipMethod.ACK,
@@ -985,6 +987,7 @@ a=sendrecv
                             myHeaders - "content-type"
                         )
                     synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+                    callStarted.set(true)
                     Rlog.d(TAG, "Invite got SUCCESS")
                 } else {
                     Rlog.d(TAG, "Invite got status ${resp.statusCode} = ${resp.statusString}")

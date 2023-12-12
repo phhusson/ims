@@ -5,6 +5,7 @@ plugins {
 
 android {
     compileSdk 33
+    ndkVersion "25.1.8937393"
 
     defaultConfig {
         applicationId "me.phh.ims"
@@ -14,6 +15,23 @@ android {
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        /*externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_ARM_MODE=arm", "-DANDROID_STL=c++_shared"
+            }
+        }*/
+    }
+    sourceSets {
+        main {
+            jniLibs {
+                srcDirs += "${projectDir}/jniLibs"
+            }
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildTypes {

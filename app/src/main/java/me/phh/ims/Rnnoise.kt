@@ -14,11 +14,20 @@ class Rnnoise : AutoCloseable {
 
     var st: Long = init()
 
-    fun processFrame(frame: ByteArray, out: ByteArray) {
-        processFrame(st, frame, out)
+    fun processFrame(input: ByteArray, out: ByteArray) {
+        // TODO: Check alignment
+        // Loop over frames
+        val frameSize = getFrameSize()
+        for(i in 0 until input.size / frameSize) {
+            val inSlice = input.sliceArray(i * frameSize until (i + 1) * frameSize)
+            val outSlice = out.sliceArray(i * frameSize until (i + 1) * frameSize)
+            android.util.Log.e("PHH", "Processing frame $i ${inSlice.size} ${outSlice.size}")
+            processFrame(st, inSlice, outSlice)
+        }
     }
 
     override fun close() {
         destroy(st)
+        st = 0
     }
 }
