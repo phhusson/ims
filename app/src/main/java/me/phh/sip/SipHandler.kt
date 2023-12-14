@@ -1473,7 +1473,7 @@ a=sendrecv
         Rlog.d(TAG, "Decoded SMS type ${sms.type}, ${sms.pdu?.toString()}")
         when (sms.type) {
             SmsType.RP_DATA_FROM_NETWORK -> {
-                val receivedCb = onSmsReceived
+                val receivedCb = try { onSmsReceived } catch(t: Throwable) { Rlog.d(TAG, "Failed sending SMS to framework", t); null}
                 if (receivedCb == null) {
                     Rlog.d(TAG, "No onSmsReceived callback!")
                     return 500
@@ -1492,7 +1492,11 @@ a=sendrecv
                 receivedCb(token, "3gpp", sms.pdu!!)
             }
             SmsType.RP_ACK_FROM_NETWORK -> {
-                onSmsStatusReportReceived?.invoke(sms.ref.toInt(), "3gpp", ByteArray(2))
+                try {
+                    onSmsStatusReportReceived?.invoke(sms.ref.toInt(), "3gpp", ByteArray(2))
+                } catch(t: Throwable) {
+                    Rlog.d(TAG, "Failed sending SMS ACK to framework", t)
+                }
             }
             else -> return 500
         }
