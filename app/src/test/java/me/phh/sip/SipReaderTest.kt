@@ -1,3 +1,4 @@
+//SPDX-License-Identifier: GPL-2.0
 package me.phh.sip
 
 import org.junit.Test
