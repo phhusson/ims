@@ -1232,7 +1232,7 @@ a=sendrecv
     val prAckWaitLock = Object()
     var prAckWait = mutableSetOf<Int>()
     fun handleCall(request: SipRequest): Int {
-        val contentType = request.headers["content-type"]!![0]
+        val contentType = request.headers["content-type"]?.get(0)
         if (contentType != "application/sdp") return 404
         callStopped.set(false)
         callStarted.set(false)
