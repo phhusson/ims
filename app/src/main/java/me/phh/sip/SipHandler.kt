@@ -1474,7 +1474,7 @@ a=sendrecv
         Rlog.d(TAG, "Decoded SMS type ${sms.type}, ${sms.pdu?.toString()}")
         when (sms.type) {
             SmsType.RP_DATA_FROM_NETWORK -> {
-                val receivedCb = try { onSmsReceived } catch(t: Throwable) { Rlog.d(TAG, "Failed sending SMS to framework", t); null}
+                val receivedCb = onSmsReceived
                 if (receivedCb == null) {
                     Rlog.d(TAG, "No onSmsReceived callback!")
                     return 500
@@ -1490,7 +1490,11 @@ a=sendrecv
                 val callId = request.headers["call-id"]!![0]
                 val cseq = request.headers["cseq"]!![0]
                 smsHeadersMap[token] = smsHeaders(dest, callId, cseq)
-                receivedCb(token, "3gpp", sms.pdu!!)
+                try {
+                    receivedCb(token, "3gpp", sms.pdu!!)
+                } catch(t: Throwable) {
+                    Rlog.d(TAG, "Failed sending SMS to framework", t);
+                }
             }
             SmsType.RP_ACK_FROM_NETWORK -> {
                 try {
