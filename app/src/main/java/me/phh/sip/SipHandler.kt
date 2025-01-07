@@ -518,9 +518,13 @@ class SipHandler(val ctxt: Context) {
                 }
 
         val associatedUri =
-            response.headers["p-associated-uri"]!!.map { it.trimStart('<').trimEnd('>').split(':') }
-        mySip = "sip:" + associatedUri.first { it[0] == "sip" }[1]
-        myTel = associatedUri.first { it[0] == "tel" }[1]
+            response.headers["p-associated-uri"]!!
+                .flatMap { it.split(",") }
+                .map { it.trimStart('<').trimEnd('>').split(':') }
+        val preSip = associatedUri.first { it[0] == "sip" }[1]
+
+        mySip = "sip:" + preSip
+        myTel = associatedUri.firstOrNull { it[0] == "tel" }?.get(1) ?: preSip.split("@")[0]
         commonHeaders +=
             mapOf(
                 "route" to route,
