@@ -56,7 +56,7 @@ fun sipAkaChallenge(tm: TelephonyManager, nonceB64: String): SipAkaResult {
     return SipAkaResult(res = res.toByteArray(), ck = ck.toByteArray(), ik = ik.toByteArray())
 }
 
-data class SipAkaDigest(
+data class SipAkaDigestSess(
     val user: String,
     val realm: String,
     val uri: String,
@@ -84,5 +84,32 @@ data class SipAkaDigest(
 
     override fun toString(): String =
         """Digest username="$user",realm="$realm",nonce="$nonceB64",uri="$uri",response="$digest",algorithm=AKAv1-MD5,cnonce="$cnonce",qop=auth,nc=$nonceCount""" +
+            (if (opaque != null) ",opaque=$opaque" else "")
+}
+
+data class SipAkaDigest(
+    val user: String,
+    val realm: String,
+    val uri: String,
+    val nonceB64: String,
+    val opaque: String?,
+    private val akaResult: SipAkaResult
+) {
+    private val H1 = ("$user:$realm:".toByteArray() + akaResult.res).toMD5()
+    private val H2 = "REGISTER:$uri".toMD5()
+    var digest: String = ""
+
+    init {
+        Rlog.d(TAG, "H1 = $H1, H2 = REGISTER:$uri = $H2")
+        increment()
+    }
+
+    fun increment() {
+        digest = "$H1:$nonceB64:$H2".toMD5()
+        Rlog.d(TAG, "chall $H1:$nonceB64:$H2 $digest")
+    }
+
+    override fun toString(): String =
+        """Digest username="$user",realm="$realm",nonce="$nonceB64",uri="$uri",response="$digest",algorithm=AKAv1-MD5""" +
             (if (opaque != null) ",opaque=$opaque" else "")
 }

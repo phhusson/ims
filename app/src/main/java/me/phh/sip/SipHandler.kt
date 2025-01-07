@@ -253,7 +253,18 @@ class SipHandler(val ctxt: Context) {
         Rlog.d(TAG, "Requesting AKA challenge")
         val akaResult = sipAkaChallenge(telephonyManager, nonceB64)
         akaDigest =
-            SipAkaDigest(
+            if(true)
+                SipAkaDigest(
+                    user = user,
+                    realm = realm,
+                    uri = "sip:$realm",
+                    nonceB64 = nonceB64,
+                    opaque = wwwAuthenticateParams["opaque"],
+                    akaResult = akaResult
+                )
+                .toString()
+            else
+            SipAkaDigestSess(
                     user = user,
                     realm = realm,
                     uri = "sip:$realm",
