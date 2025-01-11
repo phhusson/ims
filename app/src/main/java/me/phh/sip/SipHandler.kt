@@ -1211,10 +1211,12 @@ a=sendrecv
                 val dgram = DatagramPacket(dgramBuf, dgramBuf.size)
                 currentCall!!.rtpSocket.receive(dgram)
 
-                //TODO: Check RTP payload type
+                // Check RTP payload type
+                val pt = dgramBuf[1].toUByte().toInt() and 0x7f
+                Rlog.d(TAG, "Received RTP data is length ${dgram.length} pt is $pt")
 
                 val ft = (dgramBuf[13].toUByte().toUInt() shr 7) or ((dgramBuf[12].toUByte().toUInt() and (7).toUInt()) shl 1)
-                Rlog.d(TAG, "Received RTP data is length ${dgram.length} ft is $ft")
+                Rlog.d(TAG, "Received RTP data (expecting AMR) ft is $ft")
 
                 if(ft.toInt() != 7) continue
 
