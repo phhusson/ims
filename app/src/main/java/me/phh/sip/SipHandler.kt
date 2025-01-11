@@ -104,10 +104,10 @@ class SipHandler(val ctxt: Context) {
 
     lateinit private var network: Network
 
-    lateinit private var plainSocket: SipConnectionTcp
-    lateinit private var socket: SipConnectionTcp
+    lateinit private var plainSocket: SipConnection
+    lateinit private var socket: SipConnection
     lateinit private var serverSocket: SipConnectionTcpServer
-    lateinit private var serverSocketUdp: SipConnectionUdp
+    lateinit private var serverSocketUdp: SipConnectionUdpServer
     private var reliableSequenceCounter = 67
 
     private val cbLock = ReentrantLock()
@@ -226,17 +226,25 @@ class SipHandler(val ctxt: Context) {
             clientSpiS = clientSpiS,
             clientSpiC = clientSpiC)
 
-        plainSocket = SipConnectionTcp(network, pcscfAddr, localAddr)
+        //plainSocket = SipConnectionTcp(network, pcscfAddr, localAddr)
+        plainSocket = SipConnectionUdp(network, pcscfAddr, localAddr)
         plainSocket.connect(5060)
-        socket = SipConnectionTcp(network, pcscfAddr, plainSocket.localAddr)
+        socket = if(plainSocket is SipConnectionTcp)
+                SipConnectionTcp(network, pcscfAddr, plainSocket.gLocalAddr())
+            else
+                SipConnectionUdp(network, pcscfAddr, plainSocket.gLocalAddr())
         serverSocket =
-            SipConnectionTcpServer(network, pcscfAddr, plainSocket.localAddr, socket.localPort + 1)
+            SipConnectionTcpServer(network, pcscfAddr, plainSocket.gLocalAddr(), socket.gLocalPort() + 1)
         serverSocketUdp =
-            SipConnectionUdp(network, pcscfAddr, plainSocket.localAddr, socket.localPort + 1)
+            SipConnectionUdpServer(network, pcscfAddr, plainSocket.gLocalAddr(), socket.gLocalPort() + 1)
 
+        Rlog.d(TAG, "Src port is ${socket.gLocalPort()}, TCP server port is ${serverSocket.localPort}, UDP server port is ${serverSocketUdp.localPort}")
         updateCommonHeaders(plainSocket)
-        register(plainSocket.writer)
-        val plainRegReply = plainSocket.reader.parseMessage()
+        register(plainSocket.gWriter())
+        val plainRegReply =
+            // TODO: In some IMS servers, in UDP send mode, message might come back to plainSocket or to serverSocketUdp
+            if(false) plainSocket.gReader().parseMessage()
+            else serverSocketUdp.gReader().parseMessage()
         Rlog.d(TAG, "Received $plainRegReply")
         plainSocket.close()
         if (plainRegReply !is SipResponse || plainRegReply.statusCode != 401) {
@@ -327,7 +335,11 @@ class SipHandler(val ctxt: Context) {
         socket.connect(portS)
         updateCommonHeaders(socket)
         register()
-        val regReply = socket.reader.parseMessage()!!
+        val regReply = (
+            if (socket is SipConnectionTcp) socket.gReader()
+            else if (socket is SipConnectionUdp) serverSocketUdp.gReader()
+            else socket.gReader()
+        ).parseMessage()!!
         Rlog.d(TAG, "Received $regReply")
 
         if (regReply !is SipResponse || regReply.statusCode != 200) {
@@ -353,7 +365,7 @@ class SipHandler(val ctxt: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             // XXX catch and reconnect on 'java.net.SocketException: Software caused connection
             // abort' ?
-            while (parseMessage(socket.reader, socket.writer)) {}
+            while (parseMessage(socket.gReader(), socket.gWriter())) {}
             socket.close()
         }
         CoroutineScope(Dispatchers.IO).launch {
@@ -448,15 +460,22 @@ class SipHandler(val ctxt: Context) {
         )
     }
 
-    fun updateCommonHeaders(socket: SipConnectionTcp) {
-        val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+    fun updateCommonHeaders(socket: SipConnection) {
+        // Note: we are giving serverSocket (TCP) port, but TCP and UDP servers use the same port
+        val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
         contact =
             """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val newHeaders =
-            """
-            Via: SIP/2.0/TCP $local;rport
-            """.toSipHeadersMap()
+            (if(socket is SipConnectionTcp) {
+                """
+                Via: SIP/2.0/TCP $local;rport
+                """
+            } else {
+                """
+                Via: SIP/2.0/UDP $local;rport
+                """
+            }).toSipHeadersMap()
         registerHeaders += newHeaders
         commonHeaders += newHeaders
     }
@@ -469,10 +488,10 @@ class SipHandler(val ctxt: Context) {
         // well that'd only matter if the server refused replays, so keep as is.
         // XXX timeout/retry? notification on fail? receive on thread?
 
-        val writer = _writer ?: socket.writer
+        val writer = _writer ?: socket.gWriter()
 
         fun secClient(alg: String, ealg: String) =
-            "ipsec-3gpp;prot=esp;mod=trans;spi-c=${ipsecSettings.clientSpiC.spi};spi-s=${ipsecSettings.clientSpiS.spi};port-c=${socket.localPort};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
+            "ipsec-3gpp;prot=esp;mod=trans;spi-c=${ipsecSettings.clientSpiC.spi};spi-s=${ipsecSettings.clientSpiS.spi};port-c=${socket.gLocalPort()};port-s=${serverSocket.localPort};ealg=${ealg};alg=${alg}"
 
         val algs = listOf("hmac-sha-1-96", "hmac-md5-96")
         val ealgs = listOf("null", "aes-cbc")
@@ -538,7 +557,7 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun subscribe() {
-        val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+        val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
         val contactTel =
             """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
@@ -564,7 +583,7 @@ class SipHandler(val ctxt: Context) {
             setResponseCallback(msg.headers["call-id"]!![0], ::subscribeCallback)
         }
         Rlog.d(TAG, "Sending $msg")
-        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
     }
 
     fun subscribeCallback(response: SipResponse): Boolean {
@@ -601,9 +620,9 @@ class SipHandler(val ctxt: Context) {
         val allTracks = listOf(call.amrTrack, call.dtmfTrack).sorted()
         val mySdp = """
 v=0
-o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+o=- 1 2 IN $ipType ${socket.gLocalAddr().hostAddress}
 s=phh voice call
-c=IN $ipType ${socket.localAddr.hostAddress}
+c=IN $ipType ${socket.gLocalAddr().hostAddress}
 b=AS:38
 b=RS:0
 b=RR:0
@@ -653,7 +672,7 @@ a=sendrecv
                 body = mySdp
             )
         Rlog.d(TAG, "Replying back with $reply")
-        synchronized(socket.writer) { socket.writer.write(reply.toByteArray()) }
+        synchronized(socket.gWriter()) { socket.gWriter().write(reply.toByteArray()) }
 
         if(call?.outgoing == false) {
             val myHeaders2 = call.callHeaders - "rseq" - "content-type" - "require"
@@ -664,7 +683,7 @@ a=sendrecv
                     headersParam = myHeaders2
                 )
             Rlog.d(TAG, "Sending $msg2")
-            synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+            synchronized(socket.gWriter()) { socket.gWriter().write(msg2.toByteArray()) }
         }
 
         return 0
@@ -822,7 +841,7 @@ a=sendrecv
     fun acceptCall() {
         thread {
 
-            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
             val evolvedContact =
                 """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting;+g.3gpp.ps2cs-srvcc-orig-pre-alerting"""
@@ -847,7 +866,7 @@ a=sendrecv
                     body = call.sdp
                 )
             Rlog.d(TAG, "Sending $msg3")
-            synchronized(socket.writer) { socket.writer.write(msg3.toByteArray()) }
+            synchronized(socket.gWriter()) { socket.gWriter().write(msg3.toByteArray()) }
 
             callStarted.set(true)
         }
@@ -871,7 +890,7 @@ a=sendrecv
                     """.toSipHeadersMap()
             )
         Rlog.d(TAG, "Sending $msg")
-        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
     }
 
     fun rejectCall() {
@@ -887,7 +906,7 @@ a=sendrecv
                     headersParam = myHeaders
                 )
             Rlog.d(TAG, "Sending $msg")
-            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+            synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
 
             callStopped.set(true)
             onCancelledCall?.invoke(Object(), "", emptyMap())
@@ -945,9 +964,9 @@ a=sendrecv
 
             val sdp = """
 v=0
-o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+o=- 1 2 IN $ipType ${socket.gLocalAddr().hostAddress}
 s=phh voice call
-c=IN $ipType ${socket.localAddr.hostAddress}
+c=IN $ipType ${socket.gLocalAddr().hostAddress}
 b=AS:38
 b=RS:0
 b=RR:0
@@ -971,7 +990,7 @@ a=sendrecv
 
             val to = "tel:$phoneNumber;phone-context=ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
-            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
             val contactTel =
                 """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val myHeaders = commonHeaders +
@@ -1026,7 +1045,7 @@ a=sendrecv
                             to,
                             myHeaders - "content-type"
                         )
-                    synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+                    synchronized(socket.gWriter()) { socket.gWriter().write(msg2.toByteArray()) }
                     callStarted.set(true)
                     Rlog.d(TAG, "Invite got SUCCESS")
                 } else {
@@ -1106,7 +1125,7 @@ a=sendrecv
                                 newSdp
                             )
                         Rlog.d(TAG, "Sending $msg2")
-                        synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }
+                        synchronized(socket.gWriter()) { socket.gWriter().write(msg2.toByteArray()) }
                     }
 
                     return@setResponseCallback false
@@ -1162,7 +1181,7 @@ a=sendrecv
                 false // Return true when we want to stop receiving messages for that call
             }
             Rlog.d(TAG, "Sending $msg")
-            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+            synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
         }
     }
 
@@ -1337,17 +1356,17 @@ a=sendrecv
             network.bindSocket(rtpSocket)
             rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
 
-            val local = "[${socket.localAddr.hostAddress}]:${serverSocket.localPort}"
+            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
             val contactTel =
                 """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val mySeqCounter = reliableSequenceCounter++
-            val ipType = if(socket.localAddr is Inet6Address) "IP6" else "IP4"
+            val ipType = if(socket.gLocalAddr() is Inet6Address) "IP6" else "IP4"
             val mySdp = """
 v=0
-o=- 1 2 IN $ipType ${socket.localAddr.hostAddress}
+o=- 1 2 IN $ipType ${socket.gLocalAddr().hostAddress}
 s=phh voice call
-c=IN $ipType ${socket.localAddr.hostAddress}
+c=IN $ipType ${socket.gLocalAddr().hostAddress}
 b=AS:38
 b=RS:0
 b=RR:0
@@ -1462,7 +1481,7 @@ a=sendrecv
                     body = mySdp
                 )
             Rlog.d(TAG, "Sending $msg")
-            synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+            synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
             waitPrack(mySeqCounter)
 
             /*val myHeaders2 = myHeaders - "rseq" - "content-type" - "require"
@@ -1579,7 +1598,7 @@ a=sendrecv
             }
         )
         Rlog.d(TAG, "Sending $msg")
-        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
     }
 
     fun sendSmsAck(token: Int, ref: Int, error: Boolean): Unit {
@@ -1616,6 +1635,6 @@ a=sendrecv
         // ignore response
         setResponseCallback(msg.headers["call-id"]!![0], { true })
         Rlog.d(TAG, "Sending $msg")
-        synchronized(socket.writer) { socket.writer.write(msg.toByteArray()) }
+        synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
     }
 }
