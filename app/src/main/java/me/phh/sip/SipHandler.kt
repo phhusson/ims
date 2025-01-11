@@ -1050,6 +1050,14 @@ a=sendrecv
                     Rlog.d(TAG, "Invite got SUCCESS")
                 } else {
                     Rlog.d(TAG, "Invite got status ${resp.statusCode} = ${resp.statusString}")
+                    if(resp.statusCode >= 400) {
+                        onCancelledCall?.invoke(Object(), "",
+                            mapOf(
+                                "statusCode" to resp.statusCode.toString(),
+                                "statusString" to resp.statusString))
+                        // The whole call failed, so drop that call-id
+                        return@setResponseCallback true
+                    }
                 }
 
                 if(resp.headers["rseq"]?.isNotEmpty() == true && !rseqHandled) {
