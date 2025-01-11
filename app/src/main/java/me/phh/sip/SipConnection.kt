@@ -4,15 +4,24 @@ package me.phh.sip
 import android.net.IpSecManager
 import android.net.IpSecTransform
 import android.net.Network
+import android.telephony.Rlog
 import java.io.FileDescriptor
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.StandardProtocolFamily
+import java.nio.channels.Channel
+import java.nio.channels.DatagramChannel
+import java.nio.channels.SelectableChannel
+import java.nio.channels.SelectionKey
+import java.nio.channels.Selector
+import java.nio.channels.spi.SelectorProvider
 
 /* wrapper around sockets + establish ipsec tunnel given ipsec helpers */
 interface SipConnection {
@@ -28,7 +37,9 @@ interface SipConnection {
     fun gWriter(): OutputStream
     fun gReader(): SipReader
     fun gLocalPort(): Int
+    fun getChannel(): SelectableChannel
 }
+
 class SipConnectionTcp(
     val network: Network,
     val remoteAddr: InetAddress,
@@ -80,6 +91,10 @@ class SipConnectionTcp(
 
     override fun gLocalPort(): Int {
         return localPort
+    }
+
+    override fun getChannel(): SelectableChannel {
+        return socket.channel
     }
 
     override fun close() {
@@ -148,6 +163,10 @@ class SipConnectionTcpServer(
             outTransform
         )
     }
+
+    fun getChannel(): SelectableChannel {
+        return serverSocket.channel
+    }
 }
 
 class SipConnectionUdp(
@@ -170,11 +189,11 @@ class SipConnectionUdp(
     var connected = false
 
     init {
+        val channel = DatagramChannel.open(if(remoteAddr is Inet6Address) StandardProtocolFamily.INET6 else StandardProtocolFamily.INET)
         if (_localAddr != null) {
-            socket = DatagramSocket(_localPort, _localAddr)
-        } else {
-            socket = DatagramSocket()
+            channel.bind(InetSocketAddress(_localAddr, _localPort))
         }
+        socket = channel.socket()
         network.bindSocket(socket)
 
         localAddr = socket.localAddress
@@ -238,6 +257,10 @@ class SipConnectionUdp(
         return localPort
     }
 
+    override fun getChannel(): SelectableChannel {
+        return socket.channel
+    }
+
     override fun close() {
         socket.close()
     }
@@ -272,7 +295,9 @@ class SipConnectionUdpServer(
     lateinit var inTransform: IpSecTransform
     lateinit var outTransform: IpSecTransform
     init {
-        socket = DatagramSocket(localPort, localAddr)
+        val channel = DatagramChannel.open(if(remoteAddr is Inet6Address) StandardProtocolFamily.INET6 else StandardProtocolFamily.INET)
+        channel.bind(InetSocketAddress(localAddr, localPort))
+        socket = channel.socket()
         network.bindSocket(socket)
         socketFd =
             socket.javaClass.getMethod("getFileDescriptor\$").invoke(socket)
@@ -325,4 +350,35 @@ class SipConnectionUdpServer(
             outTransform
         )
     }
+
+    fun getChannel(): SelectableChannel {
+        return socket.channel
+    }
+}
+
+fun select(channels: List<SelectableChannel>): Int {
+    var returnValue = -1
+    Selector.open().use { selector ->
+        for (channel in channels) {
+            channel.configureBlocking(false)
+            channel.register(selector, SelectionKey.OP_READ)
+        }
+
+        val nSelectedKeys = selector.select()
+        for (key in selector.selectedKeys()) {
+            if (key.isReadable) {
+                val index = channels.indexOf(key.channel())
+                if (index != -1) {
+                    Rlog.e("PHH", "When selecting got result $index")
+                    returnValue = index
+                    break
+                }
+            }
+        }
+    }
+    for (channel in channels) {
+        channel.configureBlocking(true)
+    }
+
+    return returnValue
 }

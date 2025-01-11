@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
 import me.phh.ims.Rnnoise
 import java.io.*
 import java.net.*
-import java.util.*
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -70,6 +69,19 @@ class SipHandler(val ctxt: Context) {
         telephonyManager.simOperator.substring(3).let { if (it.length == 2) "0$it" else it }
     private val imsi = telephonyManager.subscriberId
 
+    /* Carrier specific settings
+     */
+    val isControlSocketUdp = when(mcc + mnc) {
+        "450006" -> true // LG U+ can only do UDP
+        "208010" -> true // 20810 can do TCP and UDP. use this for testing
+        else -> false
+    }
+    val forceSmsc = when(mcc + mnc) {
+        "450006" -> "821080010585" // LG U+
+        else -> null
+    }
+
+    //private val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
     private val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
     private val user = "$imsi@$realm"
     private var akaDigest =
@@ -151,7 +163,7 @@ class SipHandler(val ctxt: Context) {
         }
         if (msg !is SipRequest) {
             // invalid message, stop trying
-            Rlog.d(TAG, "Got invalid message, closing socket!")
+            Rlog.d(TAG, "Got invalid message! Closing socket (except main)")
             return false
         }
 
@@ -211,8 +223,10 @@ class SipHandler(val ctxt: Context) {
             val t2 = try { InetAddress.getByName("ims.mnc${mnc}.mcc${mcc}.3gppnetwork.org") } catch(t: Throwable) { null }
             Rlog.d(TAG, "Resolved $t and $t2")
             //imsFailureCallback?.invoke()
-            abandonnedBecauseOfNoPcscf = true
-            return
+            //abandonnedBecauseOfNoPcscf = true
+            //return
+            // For annoying broken Vince's RIL that can't report Pcscf
+            InetAddress.getByName("2001:4c48:400:100::2") //,/2001:4c48:400::3:2
         }
 
         localAddr = lp.linkAddresses.map { it.address }.sortedBy { if(it is Inet6Address) 0 else 1 }.first()
@@ -226,8 +240,10 @@ class SipHandler(val ctxt: Context) {
             clientSpiS = clientSpiS,
             clientSpiC = clientSpiC)
 
-        //plainSocket = SipConnectionTcp(network, pcscfAddr, localAddr)
-        plainSocket = SipConnectionUdp(network, pcscfAddr, localAddr)
+        plainSocket = if (isControlSocketUdp)
+            SipConnectionUdp(network, pcscfAddr, localAddr)
+        else
+            SipConnectionTcp(network, pcscfAddr, localAddr)
         plainSocket.connect(5060)
         socket = if(plainSocket is SipConnectionTcp)
                 SipConnectionTcp(network, pcscfAddr, plainSocket.gLocalAddr())
@@ -242,9 +258,16 @@ class SipHandler(val ctxt: Context) {
         updateCommonHeaders(plainSocket)
         register(plainSocket.gWriter())
         val plainRegReply =
-            // TODO: In some IMS servers, in UDP send mode, message might come back to plainSocket or to serverSocketUdp
-            if(false) plainSocket.gReader().parseMessage()
-            else serverSocketUdp.gReader().parseMessage()
+            if (plainSocket is SipConnectionTcp) {
+                plainSocket.gReader().parseMessage()
+            } else {
+                // In some IMS servers, in UDP send mode, message might come back to plainSocket or to serverSocketUdp
+                if (select(listOf(serverSocketUdp.getChannel(), plainSocket.getChannel())) == 0)
+                    serverSocketUdp.gReader().parseMessage()
+                else
+                    plainSocket.gReader().parseMessage()
+
+            }
         Rlog.d(TAG, "Received $plainRegReply")
         plainSocket.close()
         if (plainRegReply !is SipResponse || plainRegReply.statusCode != 401) {
@@ -281,57 +304,62 @@ class SipHandler(val ctxt: Context) {
                     akaResult = akaResult
                 )
                 .toString()
-        val securityServer = plainRegReply.headers["security-server"]!!
-        commonHeaders += ("security-verify" to securityServer)
-        registerHeaders += ("security-verify" to securityServer)
-        val supported_alg = listOf("hmac-sha-1-96", "hmac-md5-96")
-        val supported_ealg = listOf("aes-cbc", "null")
-        val (securityServerType, securityServerParams) =
-            securityServer
-                .map { it.getParams() }
-                .filter {
-                    val thisEAlg = it.component2()["ealg"] ?: "null"
-                    supported_ealg.contains(thisEAlg)
-                }
-                .filter { supported_alg.contains(it.component2()["alg"]) }
-                .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
-        require(securityServerType == "ipsec-3gpp")
 
-        val portS = securityServerParams["port-s"]!!.toInt()
-        // spi string is 32 bit unsigned, but ipSecManager wants an int...
-        val spiS = securityServerParams["spi-s"]!!.toUInt().toInt()
-        val serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
-
-        val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
-        val serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
-
-        ipsecSettings = SipIpsecSettings(
-            clientSpiS = clientSpiS,
-            clientSpiC = clientSpiC,
-            serverSpiC = serverSpiC,
-            serverSpiS = serverSpiS)
-
-        val ealg = securityServerParams["ealg"] ?: "null"
-        val (alg, hmac_key) = if (securityServerParams["alg"] == "hmac-sha-1-96") {
-            // sha-1-96 mac key must be 160 bits, pad ik
-            IpSecAlgorithm.AUTH_HMAC_SHA1 to akaResult.ik + ByteArray(4)
-        } else {
-            IpSecAlgorithm.AUTH_HMAC_MD5 to akaResult.ik
-        }
-        val ipSecBuilder =
-            IpSecTransform.Builder(ctxt)
-                .setAuthentication(IpSecAlgorithm(alg, hmac_key, 96))
-                .also {
-                    if (ealg == "aes-cbc") {
-                        it.setEncryption(IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck))
+        var portS = 5060
+        // Check if there is a security-server header in the reply
+        if(plainRegReply.headers.containsKey("security-server")) {
+            val securityServer = plainRegReply.headers["security-server"]!!
+            commonHeaders += ("security-verify" to securityServer)
+            registerHeaders += ("security-verify" to securityServer)
+            val supported_alg = listOf("hmac-sha-1-96", "hmac-md5-96")
+            val supported_ealg = listOf("aes-cbc", "null")
+            val (securityServerType, securityServerParams) =
+                securityServer
+                    .map { it.getParams() }
+                    .filter {
+                        val thisEAlg = it.component2()["ealg"] ?: "null"
+                        supported_ealg.contains(thisEAlg)
                     }
-                }
+                    .filter { supported_alg.contains(it.component2()["alg"]) }
+                    .sortedByDescending { it.component2()["q"]?.toFloat() ?: 0.toFloat() }[0]
+            require(securityServerType == "ipsec-3gpp")
 
-        val serverInTransform = ipSecBuilder.buildTransportModeTransform(pcscfAddr, clientSpiS)
-        val serverOutTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
-        socket.enableIpsec(ipSecBuilder, ipSecManager, clientSpiC, serverSpiS)
-        serverSocket.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
-        serverSocketUdp.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
+            portS = securityServerParams["port-s"]!!.toInt()
+            // spi string is 32 bit unsigned, but ipSecManager wants an int...
+            val spiS = securityServerParams["spi-s"]!!.toUInt().toInt()
+            val serverSpiS = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiS)
+
+            val spiC = securityServerParams["spi-c"]!!.toUInt().toInt()
+            val serverSpiC = ipSecManager.allocateSecurityParameterIndex(pcscfAddr, spiC)
+
+            ipsecSettings = SipIpsecSettings(
+                clientSpiS = clientSpiS,
+                clientSpiC = clientSpiC,
+                serverSpiC = serverSpiC,
+                serverSpiS = serverSpiS)
+
+            val ealg = securityServerParams["ealg"] ?: "null"
+            val (alg, hmac_key) = if (securityServerParams["alg"] == "hmac-sha-1-96") {
+                // sha-1-96 mac key must be 160 bits, pad ik
+                IpSecAlgorithm.AUTH_HMAC_SHA1 to akaResult.ik + ByteArray(4)
+            } else {
+                IpSecAlgorithm.AUTH_HMAC_MD5 to akaResult.ik
+            }
+            val ipSecBuilder =
+                IpSecTransform.Builder(ctxt)
+                    .setAuthentication(IpSecAlgorithm(alg, hmac_key, 96))
+                    .also {
+                        if (ealg == "aes-cbc") {
+                            it.setEncryption(IpSecAlgorithm(IpSecAlgorithm.CRYPT_AES_CBC, akaResult.ck))
+                        }
+                    }
+
+            val serverInTransform = ipSecBuilder.buildTransportModeTransform(pcscfAddr, clientSpiS)
+            val serverOutTransform = ipSecBuilder.buildTransportModeTransform(localAddr, serverSpiC)
+            socket.enableIpsec(ipSecBuilder, ipSecManager, clientSpiC, serverSpiS)
+            serverSocket.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
+            serverSocketUdp.enableIpsec(ipSecManager, serverInTransform, serverOutTransform)
+        }
         socket.connect(portS)
         updateCommonHeaders(socket)
         register()
@@ -365,35 +393,49 @@ class SipHandler(val ctxt: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             // XXX catch and reconnect on 'java.net.SocketException: Software caused connection
             // abort' ?
-            while (parseMessage(socket.gReader(), socket.gWriter())) {}
+            try {
+                while (true) {
+                    parseMessage(socket.gReader(), socket.gWriter())
+                }
+            } catch(t: Throwable) {
+                Rlog.d(TAG, "Got exception in main/control socket", t)
+            }
             socket.close()
         }
         CoroutineScope(Dispatchers.IO).launch {
-            while (true) {
-                // XXX catch and reconnect on 'java.net.SocketException: Socket closed' ?
-                val client = serverSocket.serverSocket.accept()
-                // there can only be a single client at a time because
-                // both source and destination ports are fixed
-                val reader = client.getInputStream().sipReader()
-                val writer = client.getOutputStream()
-                while (parseMessage(reader, writer)) {}
-                client.close()
+            try {
+                while (true) {
+                    // XXX catch and reconnect on 'java.net.SocketException: Socket closed' ?
+                    val client = serverSocket.serverSocket.accept()
+                    // there can only be a single client at a time because
+                    // both source and destination ports are fixed
+                    val reader = client.getInputStream().sipReader()
+                    val writer = client.getOutputStream()
+                    while (parseMessage(reader, writer)) { }
+                    client.close()
+                }
+            } catch(t: Throwable) {
+                Rlog.d(TAG, "Got exception in TCP server socket", t)
             }
         }
         CoroutineScope(Dispatchers.IO).launch {
-            val bufferIn = ByteArray(128*1024)
-            val dgramPacketIn = DatagramPacket(bufferIn, bufferIn.size)
-            val writer = ByteArrayOutputStream()
-            while (true) {
-                serverSocketUdp.socket.receive(dgramPacketIn)
-                Rlog.d(TAG, "Received dgram packet")
-                val baIs = ByteArrayInputStream(dgramPacketIn.data, dgramPacketIn.offset, dgramPacketIn.length)
-                val reader = baIs.sipReader()
-                while (parseMessage(reader, writer)) {}
-                val writerOut = writer.toByteArray()
-                val dgramPacketOut = DatagramPacket(writerOut, writerOut.size, dgramPacketIn.address, dgramPacketIn.port)
-                serverSocketUdp.socket.send(dgramPacketOut)
-                writer.reset()
+            try {
+                val bufferIn = ByteArray(128 * 1024)
+                val dgramPacketIn = DatagramPacket(bufferIn, bufferIn.size)
+                val writer = ByteArrayOutputStream()
+                while (true) {
+                    serverSocketUdp.socket.receive(dgramPacketIn)
+                    Rlog.d(TAG, "Received dgram packet")
+                    val baIs = ByteArrayInputStream(dgramPacketIn.data, dgramPacketIn.offset, dgramPacketIn.length)
+                    val reader = baIs.sipReader()
+                    while (parseMessage(reader, writer)) { }
+                    val writerOut = writer.toByteArray()
+                    val dgramPacketOut = DatagramPacket(writerOut, writerOut.size, dgramPacketIn.address, dgramPacketIn.port)
+                    serverSocketUdp.socket.send(dgramPacketOut)
+                    writer.reset()
+                }
+            } catch(t: Throwable) {
+                Rlog.d(TAG, "Got exception in UDP server socket", t)
             }
         }
     }
@@ -464,8 +506,9 @@ class SipHandler(val ctxt: Context) {
         // Note: we are giving serverSocket (TCP) port, but TCP and UDP servers use the same port
         val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+        val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
         contact =
-            """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
+            """<sip:$imsi@$local;transport=$transport>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val newHeaders =
             (if(socket is SipConnectionTcp) {
                 """
@@ -499,10 +542,12 @@ class SipHandler(val ctxt: Context) {
         val secClientLine =
             "Security-Client: ${secClients.joinToString(", ")}"
 
+                    //P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=216302ee2003a107
         val msg =
             SipRequest(
                 SipMethod.REGISTER,
                 "sip:$realm",
+                //"sip:lte-lguplus.co.kr",
                 registerHeaders +
                     """
                     Expires: 600000
@@ -559,8 +604,9 @@ class SipHandler(val ctxt: Context) {
     fun subscribe() {
         val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
+        val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
         val contactTel =
-            """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
+            """<sip:$myTel@$local;transport=$transport>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
         val msg =
             SipRequest(
                 SipMethod.SUBSCRIBE,
@@ -587,10 +633,10 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun subscribeCallback(response: SipResponse): Boolean {
-        if (response.statusCode != 200) {
+        /*if (response.statusCode != 200) {
             imsFailureCallback?.invoke()
             return true
-        }
+        }*/
         imsReadyCallback?.invoke()
         imsReady = true
         return true
@@ -760,7 +806,6 @@ a=sendrecv
             var firstPacket = true
 
             val bufferSize = ((minBufferSize + (rnnNoise.getFrameSize() - 1 )) / rnnNoise.getFrameSize()).toInt() * rnnNoise.getFrameSize()
-            Rlog.e(TAG, "Chosing buffersize $bufferSize")
             val buffer = ByteArray(bufferSize)
             val bufferPostRnnoise = ByteArray(bufferSize)
             while (true) {
@@ -843,8 +888,9 @@ a=sendrecv
 
             val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
+            val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
             val evolvedContact =
-                """<sip:$imsi@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting;+g.3gpp.ps2cs-srvcc-orig-pre-alerting"""
+                """<sip:$imsi@$local;transport=$transport>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting;+g.3gpp.ps2cs-srvcc-orig-pre-alerting"""
 
             Rlog.d(TAG, "Accepting call")
             val call = currentCall!!
@@ -991,8 +1037,9 @@ a=sendrecv
             val to = "tel:$phoneNumber;phone-context=ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
             val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+            val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
             val contactTel =
-                """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
+                """<sip:$myTel@$local;transport=$transport>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val myHeaders = commonHeaders +
                 """
                     From: <$mySip>
@@ -1236,10 +1283,10 @@ a=sendrecv
                     m++
                     baOs.write(left or right)
                 }
-                Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
+                //Rlog.d(TAG, "Received RTP data of length ${dgram.length} $m")
 
                 val inBufIndex = decoder.dequeueInputBuffer(-1)
-                Rlog.d(TAG, "Got decoding input buffer $inBufIndex")
+                //Rlog.d(TAG, "Got decoding input buffer $inBufIndex")
                 val inBuf = decoder.getInputBuffer(inBufIndex)!!
                 val data = baOs.toByteArray()
                 inBuf.clear()
@@ -1250,7 +1297,7 @@ a=sendrecv
                 //TODO: Can we receive multiple outs per in?
                 val outBufInfo = MediaCodec.BufferInfo()
                 val outBufIndex = decoder.dequeueOutputBuffer(outBufInfo, 0)
-                Rlog.d(TAG, "Got decoding output buffer $outBufIndex")
+                //Rlog.d(TAG, "Got decoding output buffer $outBufIndex")
                 if (outBufIndex >= 0) {
                     val outBuf = decoder.getOutputBuffer(outBufIndex)!!
                     audioTrack.write(outBuf, outBufInfo.size, AudioTrack.WRITE_BLOCKING)
@@ -1563,38 +1610,47 @@ a=sendrecv
             PhoneNumberUtils.numberToCalledPartyBCD(smsSmsc, PhoneNumberUtils.BCD_EXTENDED_TYPE_CALLED_PARTY); true
         } catch (t:Throwable) { false }
 
+        val smsManager =
+            ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
+        val smscIdentity = try {
+                smsManager
+                    .javaClass.getMethod("getSmscIdentity")
+                    .invoke(smsManager) as Uri
+        } catch (t: Throwable) { null }
+        Rlog.d(TAG, "Got smscIdentity $smscIdentity")
         // make ref up?
         val smsc =
             if (smsSmsc != null && decodableSmsc) smsSmsc
+            else if (forceSmsc != null) forceSmsc
             else {
-                val smsManager =
-                    ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
                 try {
-                    // Call SmsManager's getSmscIdentity(): Uri with introspection
-                    val identity =
-                        smsManager
-                            .javaClass.getMethod("getSmscIdentity")
-                            .invoke(smsManager) as Uri
-                    Rlog.d(TAG, "Got smsc $identity // host is ${identity.host}")
-                    identity.host!!
+                    Rlog.d(TAG, "Got smsc $smscIdentity // host is ${smscIdentity?.host} // ${smscIdentity?.scheme} // ${smscIdentity?.path}")
+                    smscIdentity!!.host!!
                 } catch(t: Throwable) {
-                    Rlog.d(TAG, "getSmscIdentity failed", t)
-                    val smscStr = smsManager.smscAddress
-                    val smscMatchRegex = Regex("([0-9]+)")
-                    Rlog.d(TAG, "Got smsc $smscStr, match ${smscMatchRegex.find(smscStr!!)}")
-                    val match = smscMatchRegex.find(smscStr!!)!!
-                    match.groupValues[1]
+                    try {
+                        Rlog.d(TAG, "getSmscIdentity failed", t)
+                        val smscStr = smsManager.smscAddress
+                        val smscMatchRegex = Regex("([0-9]+)")
+                        Rlog.d(TAG, "Got smsc $smscStr, match ${smscMatchRegex.find(smscStr!!)}")
+                        val match = smscMatchRegex.find(smscStr!!)!!
+                        match.groupValues[1]
+                    } catch(t: Throwable) {
+                        Rlog.d(TAG, "smscAddress failed", t)
+                        null
+                    }
                 }
             }
 
-        val data = SipSmsEncodeSms(ref.toByte(), if(smsc == null) null else "+$smsc", pdu)
+        // smsc
+        val data = SipSmsEncodeSms(ref.toByte(), if(smsc == null) "" else "+$smsc", pdu)
         Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
         val dest =
             if(smsc != null)
                 "sip:+$smsc@$realm"
             else
-                ""
+                "sip:$smscIdentity"
 
+        // "sip:ipsmgw.lte-lguplus.co.kr",
         val msg =
             SipRequest(
                 SipMethod.MESSAGE,
@@ -1602,15 +1658,17 @@ a=sendrecv
                 commonHeaders +
                     """
                     From: <$mySip>
-                    To: <sip:+$smsc@$realm>
+                    To: <$dest>
                     P-Preferred-Identity: <$mySip>
                     P-Asserted-Identity: <$mySip>
                     Expires: 600000
                     Content-Type: application/vnd.3gpp.sms
-                    Supported: sec-agree
+                    Supported: sec-agree, path
                     Require: sec-agree
                     Proxy-Require: sec-agree
                     Allow: MESSAGE
+                    Accept-Contact: *;+g.3gpp.smsip;require;explicit
+                    Request-Disposition: no-fork
                     """.toSipHeadersMap(),
                 data
             )
