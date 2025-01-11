@@ -1569,22 +1569,40 @@ a=sendrecv
             else {
                 val smsManager =
                     ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
-                val smscStr = smsManager.smscAddress
-                val smscMatchRegex = Regex("([0-9]+)")
-                Rlog.d(TAG, "Got smsc $smscStr, match ${smscMatchRegex.find(smscStr!!)}")
-                smscMatchRegex.find(smscStr!!)!!.groupValues[1]
+                try {
+                    // Call SmsManager's getSmscIdentity(): Uri with introspection
+                    val identity =
+                        smsManager
+                            .javaClass.getMethod("getSmscIdentity")
+                            .invoke(smsManager) as Uri
+                    Rlog.d(TAG, "Got smsc $identity // host is ${identity.host}")
+                    identity.host!!
+                } catch(t: Throwable) {
+                    Rlog.d(TAG, "getSmscIdentity failed", t)
+                    val smscStr = smsManager.smscAddress
+                    val smscMatchRegex = Regex("([0-9]+)")
+                    Rlog.d(TAG, "Got smsc $smscStr, match ${smscMatchRegex.find(smscStr!!)}")
+                    val match = smscMatchRegex.find(smscStr!!)!!
+                    match.groupValues[1]
+                }
             }
-        val data = SipSmsEncodeSms(ref.toByte(), "+$smsc", pdu)
+
+        val data = SipSmsEncodeSms(ref.toByte(), if(smsc == null) null else "+$smsc", pdu)
         Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
+        val dest =
+            if(smsc != null)
+                "sip:+$smsc@$realm"
+            else
+                ""
 
         val msg =
             SipRequest(
                 SipMethod.MESSAGE,
-                "sip:+$smsc@$realm",
+                "sip:$realm",
                 commonHeaders +
                     """
                     From: <$mySip>
-                    To: <sip:+$smsc@$realm;user=phone>
+                    To: <sip:+$smsc@$realm>
                     P-Preferred-Identity: <$mySip>
                     P-Asserted-Identity: <$mySip>
                     Expires: 600000
