@@ -1,29 +1,22 @@
 //SPDX-License-Identifier: GPL-2.0
 package me.phh.ims
 
-import android.content.Context
+import android.os.Bundle
 import android.os.Message
 import android.telephony.Rlog
 import android.telephony.ims.ImsCallProfile
+import android.telephony.ims.ImsCallSessionListener
+import android.telephony.ims.ImsReasonInfo
 import android.telephony.ims.ImsStreamMediaProfile
 import android.telephony.ims.feature.ImsFeature
-import android.telephony.ims.feature.MmTelFeature
 import android.telephony.ims.stub.ImsCallSessionImplBase
 import android.telephony.ims.stub.ImsMultiEndpointImplBase
 import android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_LTE
 import android.telephony.ims.stub.ImsSmsImplBase
 import android.telephony.ims.stub.ImsUtImplBase
-import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
-import android.telephony.ims.ImsCallSessionListener
-import android.telephony.ims.ImsReasonInfo
-import android.telephony.imsmedia.ImsMediaManager
-import android.telephony.imsmedia.ImsMediaManager.OnConnectedCallback
 import me.phh.sip.SipHandler
 import me.phh.sip.randomBytes
 import me.phh.sip.toHex
-import java.util.concurrent.Executor
 
 // frameworks/base/telephony/java/android/telephony/ims/feature/MmTelFeature.java
 // We extend it through java once because kotlin cannot override
@@ -197,7 +190,19 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
         }
         sipHandler.onCancelledCall = { param: Object, s: String, map: Map<String, String> ->
             Rlog.d(TAG, "Cancelling call")
-            callListener?.callSessionTerminated(ImsReasonInfo(ImsReasonInfo.CODE_USER_TERMINATED_BY_REMOTE, 0, "Kikoo"))
+            val statusCode = map["statusCode"]?.toInt() ?: -1
+            if (statusCode >= 400) {
+                val statusMessage = map["statusString"] ?: "Kikoo"
+                callListener?.callSessionTerminated(ImsReasonInfo(ImsReasonInfo.CODE_NETWORK_REJECT, 0, statusMessage))
+            } else {
+                callListener?.callSessionTerminated(
+                    ImsReasonInfo(
+                        ImsReasonInfo.CODE_USER_TERMINATED_BY_REMOTE,
+                        0,
+                        "Kikoo"
+                    )
+                )
+            }
         }
 
         imsService.getRegistration(slotId).onRegistering(REGISTRATION_TECH_LTE)
