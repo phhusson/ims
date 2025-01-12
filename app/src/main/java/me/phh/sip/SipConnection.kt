@@ -218,7 +218,7 @@ class SipConnectionUdp(
             }
         }
         reader = object: InputStream() {
-            val currentDgram = DatagramPacket(ByteArray(1500), 1500)
+            val currentDgram = DatagramPacket(ByteArray(128*1024), 128*1024)
             var currentPosition = 0
             var currentSize = 0
             override fun read(): Int {
@@ -306,7 +306,7 @@ class SipConnectionUdpServer(
 
     fun gReader(): SipReader {
         return object: InputStream() {
-            val currentDgram = DatagramPacket(ByteArray(1500), 1500)
+            val currentDgram = DatagramPacket(ByteArray(128*1024), 128*1024)
             var currentPosition = 0
             var currentSize = 0
             override fun read(): Int {
