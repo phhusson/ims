@@ -1650,16 +1650,16 @@ a=sendrecv
         val data = SipSmsEncodeSms(ref.toByte(), if(smsc == null) "" else "+$smsc", pdu)
         Rlog.d(TAG, "sending sms ${data.toHex()} to smsc $smsc")
         val dest =
-            if(smsc != null)
-                "sip:+$smsc@$realm"
-            else
+            if(smscIdentity != null)
                 "sip:$smscIdentity"
+            else
+                "sip:+$smsc@$realm"
 
         // "sip:ipsmgw.lte-lguplus.co.kr",
         val msg =
             SipRequest(
                 SipMethod.MESSAGE,
-                "sip:$realm",
+                "sip:${smscIdentity ?: realm}",
                 commonHeaders +
                     """
                     From: <$mySip>
