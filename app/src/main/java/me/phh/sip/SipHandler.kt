@@ -424,6 +424,7 @@ class SipHandler(val ctxt: Context) {
                 val dgramPacketIn = DatagramPacket(bufferIn, bufferIn.size)
                 val writer = ByteArrayOutputStream()
                 while (true) {
+                    dgramPacketIn.length = bufferIn.size
                     serverSocketUdp.socket.receive(dgramPacketIn)
                     Rlog.d(TAG, "Received dgram packet")
                     val baIs = ByteArrayInputStream(dgramPacketIn.data, dgramPacketIn.offset, dgramPacketIn.length)
