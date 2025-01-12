@@ -16,6 +16,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.StandardProtocolFamily
+import java.nio.ByteBuffer
 import java.nio.channels.Channel
 import java.nio.channels.DatagramChannel
 import java.nio.channels.SelectableChannel
@@ -211,30 +212,37 @@ class SipConnectionUdp(
         }
         writer = object: OutputStream() {
             override fun write(p0: Int) {
-                socket.send(DatagramPacket(byteArrayOf(p0.toByte()), 1, remoteAddr, remotePort))
+                write(byteArrayOf(p0.toByte()))
             }
             override fun write(p0: ByteArray) {
-                socket.send(DatagramPacket(p0, p0.size, remoteAddr, remotePort))
+                // Send using the datagram channel
+                socket.channel.send(ByteBuffer.wrap(p0), InetSocketAddress(remoteAddr, remotePort))
             }
         }
         reader = object: InputStream() {
             val currentDgram = DatagramPacket(ByteArray(128*1024), 128*1024)
             var currentPosition = 0
             var currentSize = 0
+
+            fun recvPacket() {
+                // select()
+                select(listOf(getChannel()))
+                socket.receive(currentDgram)
+                currentPosition = 0
+                currentSize = currentDgram.length
+            }
+
             override fun read(): Int {
                 if (currentPosition >= currentSize) {
-                    socket.receive(currentDgram)
-                    currentPosition = 0
-                    currentSize = currentDgram.length
+                    recvPacket()
                 }
-                return currentDgram.data[currentPosition++].toInt()
+                val ret =  currentDgram.data[currentPosition++].toInt()
+                return ret
             }
 
             override fun read(b: ByteArray, off: Int, len: Int): Int {
                 if (currentPosition >= currentSize) {
-                    socket.receive(currentDgram)
-                    currentPosition = 0
-                    currentSize = currentDgram.length
+                    recvPacket()
                 }
                 val toRead = minOf(len, currentSize - currentPosition)
                 currentDgram.data.copyInto(b, off, currentPosition, currentPosition + toRead)
@@ -309,20 +317,26 @@ class SipConnectionUdpServer(
             val currentDgram = DatagramPacket(ByteArray(128*1024), 128*1024)
             var currentPosition = 0
             var currentSize = 0
+
+            fun recvPacket() {
+                // select()
+                select(listOf(getChannel()))
+                socket.receive(currentDgram)
+                currentPosition = 0
+                currentSize = currentDgram.length
+            }
+
             override fun read(): Int {
                 if (currentPosition >= currentSize) {
-                    socket.receive(currentDgram)
-                    currentPosition = 0
-                    currentSize = currentDgram.length
+                    recvPacket()
                 }
-                return currentDgram.data[currentPosition++].toInt()
+                val ret = currentDgram.data[currentPosition++].toInt()
+                return ret
             }
 
             override fun read(b: ByteArray, off: Int, len: Int): Int {
                 if (currentPosition >= currentSize) {
-                    socket.receive(currentDgram)
-                    currentPosition = 0
-                    currentSize = currentDgram.length
+                    recvPacket()
                 }
                 val toRead = minOf(len, currentSize - currentPosition)
                 currentDgram.data.copyInto(b, off, currentPosition, currentPosition + toRead)
