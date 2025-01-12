@@ -1617,9 +1617,10 @@ a=sendrecv
         val smsManager =
             ctxt.getSystemService(SmsManager::class.java).createForSubscriptionId(subId)
         val smscIdentity = try {
-                smsManager
-                    .javaClass.getMethod("getSmscIdentity")
-                    .invoke(smsManager) as Uri
+            val i = smsManager
+                .javaClass.getMethod("getSmscIdentity")
+                .invoke(smsManager) as Uri
+            if (i.host == null) null else i
         } catch (t: Throwable) { null }
         Rlog.d(TAG, "Got smscIdentity $smscIdentity")
         // make ref up?
