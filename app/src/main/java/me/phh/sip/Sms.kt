@@ -98,6 +98,11 @@ fun ByteArray.SipSmsDecode(): SipSms? {
 
             return SipSms(SmsType.RP_ACK_FROM_NETWORK, ref, null)
         }
+        SmsType.RP_ERROR_FROM_NETWORK.value -> {
+            val ref = buf.get()
+
+            return SipSms(SmsType.RP_ERROR_FROM_NETWORK, ref, null)
+        }
         // RP_ERROR_FROM_NETWORK possible
         else -> {
             Rlog.w(TAG, "Got unhandled SMS pdu of type ${type}")

@@ -1595,6 +1595,9 @@ a=sendrecv
                     Rlog.d(TAG, "Failed sending SMS ACK to framework", t)
                 }
             }
+            SmsType.RP_ERROR_FROM_NETWORK -> {
+                Rlog.d(TAG, "SMS error from network")
+            }
             else -> return 500
         }
         return 200
