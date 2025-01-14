@@ -734,7 +734,9 @@ a=sendrecv
             rtpRemoteAddr = call.rtpRemoteAddr,
             rtpRemotePort = call.rtpRemotePort,
             rtpSocket = call.rtpSocket,
-            sdp = request.body)
+            sdp = request.body,
+            hasEarlyMedia = call.hasEarlyMedia,
+            )
 
         val reply =
             SipResponse(
@@ -791,6 +793,7 @@ a=sendrecv
         val rtpRemoteAddr: InetAddress,
         val rtpRemotePort: Int,
         val rtpSocket: DatagramSocket,
+        val hasEarlyMedia: Boolean,
         val imsMediaSession: ImsMediaSession? = null
     )
 
@@ -1171,7 +1174,9 @@ a=sendrecv
                     rtpRemoteAddr = rtpRemoteAddr,
                     rtpRemotePort = rtpRemotePort.toInt(),
                     rtpSocket = rtpSocket,
-                    sdp = resp.body)
+                    sdp = resp.body,
+                    hasEarlyMedia = resp.headers["p-early-media"]?.isNotEmpty() == true
+                )
 
                 // This isn't the answer to our INVITE, but to our later precondition UPDATE
                 // TODO Actually check cseq
@@ -1430,6 +1435,8 @@ a=sendrecv
             return attributes.firstOrNull() { it.startsWith("fmtp:$track") }
         }
 
+        val hasEarlyMedia = request.headers["p-early-media"]?.isNotEmpty() == true
+
         // Look for an AMR/8000 mode
         // TODO: Select which one? SFR has two, one with mode-set=7 one without it. This would require reading the fmtp lines
         val (amrTrack, amrTrackDesc) = lookTrackMatching("AMR/8000", "octet-align=0", "octet-align=1")!!
@@ -1502,7 +1509,8 @@ a=sendrecv
                 rtpRemoteAddr = rtpRemoteAddr,
                 rtpRemotePort = rtpRemotePort.toInt(),
                 rtpSocket =  rtpSocket,
-                sdp = mySdp
+                sdp = mySdp,
+                hasEarlyMedia = hasEarlyMedia,
             )
 
             if(false) {
@@ -1544,7 +1552,9 @@ a=sendrecv
                                 rtpRemotePort = rtpRemotePort.toInt(),
                                 rtpSocket = rtpSocket,
                                 sdp = mySdp,
-                                imsMediaSession = session)
+                                imsMediaSession = session,
+                                hasEarlyMedia = hasEarlyMedia
+                            )
                         }
 
                         override fun onOpenSessionFailure(error: Int) {
@@ -1564,29 +1574,39 @@ a=sendrecv
             synchronized(prAckWaitLock) {
                 prAckWait += mySeqCounter
             }
-            val msg =
-                SipResponse(
-                    statusCode = 183,
-                    statusString = "Session Progress",
-                    headersParam = myHeaders,
-                    body = mySdp
-                )
-            Rlog.d(TAG, "Sending $msg")
-            synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
-            waitPrack(mySeqCounter)
+            if (hasEarlyMedia) {
+                val msg =
+                    SipResponse(
+                        statusCode = 183,
+                        statusString = "Session Progress",
+                        headersParam = myHeaders,
+                        body = mySdp
+                    )
+                Rlog.d(TAG, "Sending $msg")
+                synchronized(socket.gWriter()) { socket.gWriter().write(msg.toByteArray()) }
+                waitPrack(mySeqCounter)
+            }
+            if (!hasEarlyMedia) {
+                val myHeaders2 = myHeaders - "rseq" - "content-type" - "require" +
+                    """
+Supported: 100rel, replaces, timer
+P-Access-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=4500620f331a5e06
 
-            /*val myHeaders2 = myHeaders - "rseq" - "content-type" - "require"
-            val msg2 =
-                SipResponse(
-                    statusCode = 180,
-                    statusString = "Ringing",
-                    headersParam = myHeaders2
-                )
-            Rlog.d(TAG, "Sending $msg2")
-            synchronized(socket.writer) { socket.writer.write(msg2.toByteArray()) }*/
-
-
+""".toSipHeadersMap()
+                val msg2 =
+                    SipResponse(
+                        statusCode = 180,
+                        statusString = "Ringing",
+                        headersParam = myHeaders2
+                    )
+                Rlog.d(TAG, "Sending $msg2")
+                synchronized(socket.gWriter()) { socket.gWriter().write(msg2.toByteArray()) }
+            }
         }
+
+        // Next step is 180 Ringing, handled in the thread
+        if (!hasEarlyMedia)
+            return 0
         return 100
     }
 
