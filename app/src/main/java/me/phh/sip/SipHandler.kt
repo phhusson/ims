@@ -84,6 +84,11 @@ class SipHandler(val ctxt: Context) {
         "450006" -> "821080010585" // LG U+
         else -> null
     }
+    // Sess is more secure so default to it
+    val requireNonsessAka = when(mcc + mnc) {
+        "450006" -> true
+        else -> false
+    }
 
     //private val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
     private val realm = "ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
@@ -288,7 +293,7 @@ class SipHandler(val ctxt: Context) {
         Rlog.d(TAG, "Requesting AKA challenge")
         val akaResult = sipAkaChallenge(telephonyManager, nonceB64)
         akaDigest =
-            if(true)
+            if(requireNonsessAka)
                 SipAkaDigest(
                     user = user,
                     realm = realm,
