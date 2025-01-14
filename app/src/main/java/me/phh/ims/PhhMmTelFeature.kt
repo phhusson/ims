@@ -128,7 +128,15 @@ class PhhMmTelFeature(val slotId: Int) : PhhMmTelFeatureProtected(slotId) {
 
         var callListener: ImsCallSessionListener? = null
         sipHandler.onIncomingCall = { handle: Object, from: String, extras: Map<String, String> -> 
-            val callProfile = ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE)
+            val callProfile = ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE,
+                Bundle(),
+                ImsStreamMediaProfile(
+                    ImsStreamMediaProfile.AUDIO_QUALITY_EVS_FB,
+                    ImsStreamMediaProfile.DIRECTION_SEND_RECEIVE,
+                    ImsStreamMediaProfile.VIDEO_QUALITY_NONE,
+                    ImsStreamMediaProfile.DIRECTION_INACTIVE,
+                    ImsStreamMediaProfile.RTT_MODE_DISABLED,
+                ))
 
             callProfile.setCallExtra(ImsCallProfile.EXTRA_OI, from)
             callProfile.setCallExtra(ImsCallProfile.EXTRA_DISPLAY_TEXT, from)
