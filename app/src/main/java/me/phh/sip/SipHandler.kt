@@ -1177,7 +1177,7 @@ a=sendrecv
                 }
 
                 val isSdp = resp.headers["content-type"]?.get(0) == "application/sdp"
-                val isPrecondition = resp.headers["require"]?.get(0)?.contains("precondition") == true
+                val isPrecondition = resp.headers["require"]?.find { it.contains("precondition") } != null
 
                 if (!isSdp) return@setResponseCallback false
 
