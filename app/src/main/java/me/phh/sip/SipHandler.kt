@@ -1462,6 +1462,8 @@ a=sendrecv
         val (dtmfTrack, dtmfTrackDesc) = lookTrackMatching("telephone-event/8000")!!
 
         val allTracks = listOf(amrTrack, dtmfTrack).sorted()
+        // destination is sip:<owner>@realm, extract owner
+        val owner = request.destination.substringAfter("sip:").substringBefore("@")
 
         thread {
             // Need to sleep a bit so that our 100 Trying is sent first. Kinda weird.
@@ -1480,9 +1482,9 @@ a=sendrecv
                 """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
             val mySeqCounter = reliableSequenceCounter++
             val ipType = if(socket.gLocalAddr() is Inet6Address) "IP6" else "IP4"
-            val mySdp = """
+            val mySdp = ("""
 v=0
-o=- 1 2 IN $ipType ${socket.gLocalAddr().hostAddress}
+o=$owner 1 2 IN $ipType ${socket.gLocalAddr().hostAddress}
 s=phh voice call
 c=IN $ipType ${socket.gLocalAddr().hostAddress}
 b=AS:38
