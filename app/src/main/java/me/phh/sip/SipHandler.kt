@@ -514,7 +514,11 @@ class SipHandler(val ctxt: Context) {
 
     fun updateCommonHeaders(socket: SipConnection) {
         // Note: we are giving serverSocket (TCP) port, but TCP and UDP servers use the same port
-        val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+        val local = if(socket.gLocalAddr() is Inet6Address)
+            "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+        else
+            "${socket.gLocalAddr().hostAddress}:${serverSocket.localPort}"
+
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
         val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
         contact =
@@ -636,7 +640,11 @@ class SipHandler(val ctxt: Context) {
     }
 
     fun subscribe() {
-        val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+        val local =
+            if(socket.gLocalAddr() is Inet6Address)
+                "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+            else
+                "${socket.gLocalAddr().hostAddress}:${serverSocket.localPort}"
         val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
         val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
         val contactTel =
@@ -923,7 +931,11 @@ a=sendrecv
     fun acceptCall() {
         thread {
 
-            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+            val local =
+                if(socket.gLocalAddr() is Inet6Address)
+                    "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+                else
+                    "${socket.gLocalAddr().hostAddress}:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
             val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
             val evolvedContact =
@@ -1073,7 +1085,11 @@ a=sendrecv
 
             val to = "tel:$phoneNumber;phone-context=ims.mnc$mnc.mcc$mcc.3gppnetwork.org"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0, 8)}-${imei.substring(8, 14)}-0>"
-            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+            val local =
+                if(socket.gLocalAddr() is Inet6Address)
+                    "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+                else
+                    "${socket.gLocalAddr().hostAddress}:${serverSocket.localPort}"
             val transport = if (socket is SipConnectionTcp) "tcp" else "udp"
             val contactTel =
                 """<sip:$myTel@$local;transport=$transport>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
@@ -1454,7 +1470,11 @@ a=sendrecv
             network.bindSocket(rtpSocket)
             rtpSocket.connect(rtpRemoteAddr, rtpRemotePort.toInt())
 
-            val local = "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+            val local =
+                if(socket.gLocalAddr() is Inet6Address)
+                    "[${socket.gLocalAddr().hostAddress}]:${serverSocket.localPort}"
+                else
+                    "${socket.gLocalAddr().hostAddress}:${serverSocket.localPort}"
             val sipInstance = "<urn:gsma:imei:${imei.substring(0,8)}-${imei.substring(8,14)}-0>"
             val contactTel =
                 """<sip:$myTel@$local;transport=tcp>;expires=600000;+sip.instance="$sipInstance";+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;audio"""
