@@ -1139,11 +1139,21 @@ a=sendrecv
 
                 if (cseq.contains("INVITE") && (resp.statusCode == 200 || resp.statusCode == 202)) {
                     // TODO Send UI that call started
+                    // ACK C-Seq must be the same as INVITE C-Seq
+                    // Extract C-Seq
+                    val cseqLine = resp.headers["cseq"]!![0]
+                    val cseq = cseqLine.split(" ")[0].toInt()
+                    val newTo = resp.headers["to"]!![0]
+                    val newFrom = resp.headers["from"]!![0]
                     val msg2 =
                         SipRequest(
                             SipMethod.ACK,
                             to,
-                            myHeaders - "content-type"
+                            myHeaders - "content-type" + """
+                                CSeq: $cseq ACK
+                                To: $newTo
+                                From: $newFrom
+                                """.toSipHeadersMap()
                         )
                     synchronized(socket.gWriter()) { socket.gWriter().write(msg2.toByteArray()) }
                     callStarted.set(true)
